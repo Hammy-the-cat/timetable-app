@@ -1,0 +1,233 @@
+"use client";
+
+import { DAY_CONFIGS, formatSlot } from "@/lib/school";
+import { TimetableData, WeeklySlot, ScheduleCell, Weekday, ClassGroup, Teacher } from "@/lib/types";
+import { useMemo } from "react";
+
+interface MatrixViewProps {
+    data: TimetableData;
+    selectedSlot: { classId: string; slot: WeeklySlot } | null;
+    onSelectSlot: (classId: string, slot: WeeklySlot) => void;
+}
+
+export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps) {
+    const allSlots = useMemo(() => {
+        return DAY_CONFIGS.flatMap((day) =>
+            Array.from({ length: day.periods }, (_, i) => ({
+                day: day.key as Weekday,
+                period: i + 1,
+            }))
+        );
+    }, []);
+
+    const getClassLabel = (c: ClassGroup) => `${c.grade}-${c.label}`;
+
+    const getSubjectName = (subjectId: string) => {
+        return data.subjects.find((s) => s.id === subjectId)?.name || "";
+    };
+
+    const getTeacherLabel = (t: Teacher) => {
+        const mainSubject = t.subjects[0] || "";
+        return `${mainSubject} ${t.name}`;
+    };
+
+    const getMeetingName = (day: string, period: number) =>
+        data.meetings.find((m) =>
+            m.slots.some((s) => s.day === day && s.period === period)
+        )?.name;
+
+    return (
+        <div className="flex flex-col gap-8 p-6 bg-slate-50 min-h-screen">
+            {/* Header Info */}
+            <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex flex-col gap-1">
+                    <h2 className="text-2xl font-black text-slate-800 tracking-tight">全校時間割マトリックス</h2>
+                    <p className="text-xs text-slate-400 font-bold uppercase">IdeaEngine Timetable Professional Module</p>
+                </div>
+                <div className="bg-brand-50 text-brand-700 px-4 py-2 rounded-full text-xs font-bold border border-brand-100 flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-500"></span>
+                    </span>
+                    リアルタイム編集中
+                </div>
+            </div>
+
+            {/* Top Part: Classes */}
+            <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                    <span className="p-2 bg-brand-500 text-white rounded-lg shadow-lg shadow-brand-200">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor font-bold">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                    </span>
+                    <h3 className="text-lg font-black text-slate-800">学級別時間割</h3>
+                </div>
+                <div className="overflow-hidden shadow-2xl shadow-slate-200 border border-slate-200 rounded-2xl bg-white">
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-[11px]">
+                            <thead>
+                                <tr className="bg-slate-50/80 backdrop-blur-md sticky top-0 z-30">
+                                    <th className="border border-slate-200 p-4 sticky left-0 z-40 bg-slate-50 text-slate-400 font-black uppercase text-[10px] w-24">Grade-Class</th>
+                                    {DAY_CONFIGS.map((day) => (
+                                        <th
+                                            key={day.key}
+                                            colSpan={day.periods}
+                                            className="border border-slate-200 p-2 text-center font-black text-slate-700 border-b-2 border-b-slate-400 border-r-4 border-r-slate-200 last:border-r-0"
+                                        >
+                                            {day.shortLabel}
+                                        </th>
+                                    ))}
+                                </tr>
+                                <tr className="bg-slate-50/50 sticky top-12 z-20">
+                                    <th className="border border-slate-200 p-1 sticky left-0 z-40 bg-slate-50 border-r-2 border-r-slate-200"></th>
+                                    {allSlots.map((s, i) => {
+                                        const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== s.day;
+                                        return (
+                                            <th key={i} className={`border border-slate-200 p-1 text-center w-14 font-mono font-black text-slate-400 ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''}`}>
+                                                {s.period}
+                                            </th>
+                                        );
+                                    })}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.classes.map((cls) => (
+                                    <tr key={cls.id} className="hover:bg-brand-50/30 transition-colors group">
+                                        <td className="border border-slate-200 p-3 font-black text-slate-800 sticky left-0 z-10 bg-white group-hover:bg-slate-50 text-center border-r-2 border-r-slate-300">
+                                            {getClassLabel(cls)}
+                                        </td>
+                                        {allSlots.map((slot, i) => {
+                                            const cell = data.schedule[cls.id]?.[slot.day]?.[slot.period];
+                                            const subjectName = cell?.subjectId ? getSubjectName(cell.subjectId) : "";
+                                            const meetingName = getMeetingName(slot.day, slot.period);
+                                            const isSelected = selectedSlot?.classId === cls.id &&
+                                                selectedSlot.slot.day === slot.day &&
+                                                selectedSlot.slot.period === slot.period;
+
+                                            const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== slot.day;
+
+                                            return (
+                                                <td
+                                                    key={i}
+                                                    onClick={() => onSelectSlot(cls.id, slot)}
+                                                    className={`border border-slate-200 p-1 text-center cursor-pointer transition-all h-14 min-w-[3.5rem] relative ${isSelected ? "bg-brand-50 ring-4 ring-inset ring-brand-500 z-10" : "hover:bg-brand-50"
+                                                        } ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''} ${meetingName ? 'bg-amber-50/20' : ''}`}
+                                                >
+                                                    {meetingName ? (
+                                                        <span className="text-[9px] font-bold text-amber-600 opacity-60">
+                                                            {meetingName}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="font-bold text-slate-900 line-clamp-2 leading-tight">
+                                                            {subjectName}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            {/* Bottom Part: Teachers */}
+            <div className="space-y-4 pb-24">
+                <div className="flex items-center gap-3">
+                    <span className="p-2 bg-indigo-500 text-white rounded-lg shadow-lg shadow-indigo-200">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor font-bold">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                    </span>
+                    <h3 className="text-lg font-black text-slate-800">教員別・授業担当一覧</h3>
+                </div>
+                <div className="overflow-hidden shadow-2xl shadow-slate-200 border border-slate-200 rounded-2xl bg-white">
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-[11px]">
+                            <thead>
+                                <tr className="bg-slate-50/80 backdrop-blur-md sticky top-0 z-30">
+                                    <th className="border border-slate-200 p-4 sticky left-0 z-40 bg-slate-50 text-slate-400 font-black uppercase text-[10px] w-32 text-left">Teacher Name</th>
+                                    {DAY_CONFIGS.map((day) => (
+                                        <th
+                                            key={day.key}
+                                            colSpan={day.periods}
+                                            className="border border-slate-200 p-2 text-center font-black text-slate-700 border-b-2 border-b-slate-400 border-r-4 border-r-slate-200 last:border-r-0"
+                                        >
+                                            {day.shortLabel}
+                                        </th>
+                                    ))}
+                                </tr>
+                                <tr className="bg-slate-50/50 sticky top-12 z-20">
+                                    <th className="border border-slate-200 p-1 sticky left-0 z-40 bg-slate-50 border-r-2 border-r-slate-200"></th>
+                                    {allSlots.map((s, i) => {
+                                        const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== s.day;
+                                        return (
+                                            <th key={i} className={`border border-slate-200 p-1 text-center w-14 font-mono font-black text-slate-400 ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''}`}>
+                                                {s.period}
+                                            </th>
+                                        );
+                                    })}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.teachers.map((teacher) => (
+                                    <tr key={teacher.id} className="hover:bg-indigo-50/30 transition-colors group">
+                                        <td className="border border-slate-200 p-3 font-black text-slate-700 sticky left-0 z-10 bg-white group-hover:bg-slate-50 whitespace-nowrap border-r-2 border-r-slate-300">
+                                            {getTeacherLabel(teacher)}
+                                        </td>
+                                        {allSlots.map((slot, i) => {
+                                            let assignedClassLabel = "";
+                                            for (const classId of Object.keys(data.schedule)) {
+                                                const cell = data.schedule[classId]?.[slot.day]?.[slot.period];
+                                                if (cell?.teacherId === teacher.id) {
+                                                    const cls = data.classes.find(c => c.id === classId);
+                                                    if (cls) assignedClassLabel = getClassLabel(cls);
+                                                    break;
+                                                }
+                                            }
+                                            const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== slot.day;
+                                            const isUnavailable = teacher.unavailable.some(us => us.day === slot.day && us.period === slot.period);
+                                            const meetingName = getMeetingName(slot.day, slot.period);
+
+                                            return (
+                                                <td
+                                                    key={i}
+                                                    className={`border border-slate-200 p-1 text-center h-14 min-w-[3.5rem] ${isUnavailable ? "bg-slate-100/50 slanted-stripes" : ""} ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''} ${meetingName ? 'bg-amber-50/10' : ''}`}
+                                                >
+                                                    {meetingName ? (
+                                                        <span className="text-[9px] font-bold text-amber-500 opacity-40">
+                                                            会議
+                                                        </span>
+                                                    ) : (
+                                                        <span className="font-black text-indigo-700">
+                                                            {assignedClassLabel}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <style jsx>{`
+                .slanted-stripes {
+                    background-image: repeating-linear-gradient(
+                        45deg,
+                        transparent,
+                        transparent 5px,
+                        rgba(0, 0, 0, 0.05) 5px,
+                        rgba(0, 0, 0, 0.05) 10px
+                    );
+                }
+            `}</style>
+        </div>
+    );
+}
