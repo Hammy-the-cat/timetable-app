@@ -59,7 +59,9 @@ export const readJsonFile = (file: File): Promise<TimetableData> => {
 };
 
 export const exportWorkbook = async (data: TimetableData) => {
+  // @ts-ignore
   const ExcelJS = await import("exceljs");
+  // @ts-ignore
   const { saveAs } = await import("file-saver");
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "VIBECORDING Timetable";
