@@ -69,7 +69,7 @@ export function TimetableWorkspace() {
       : undefined;
 
   const mSelectedClass = matrixSelection ? data.classes.find((c: ClassGroup) => c.id === matrixSelection.classId) : null;
-  const mSelectedCell = (matrixSelection && mSelectedClass) ? data.schedule[mSelectedClass.id]?.[matrixSelection.slot.day]?.[matrixSelection.slot.period] : null;
+  const mSelectedCell = (matrixSelection && mSelectedClass) ? data.schedule[mSelectedClass.id]?.[matrixSelection.slot.day]?.[matrixSelection.slot.period] : undefined;
 
   const warnings =
     matrixSelection && mSelectedClass
