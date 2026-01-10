@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  distDir: 'out',
+  trailingSlash: true,
   // @ts-ignore
   eslint: {
     ignoreDuringBuilds: true,
