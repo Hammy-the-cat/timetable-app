@@ -41,6 +41,7 @@ export function TimetableWorkspace() {
     reset,
     replaceData,
     autoGenerate,
+    clearSchedule,
   } = useTimetableStore();
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -142,6 +143,19 @@ export function TimetableWorkspace() {
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14.5 2 14.5 7 20 7" /></svg>
                   Excel出力
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm("時間割の配置をすべて消去しますか？（教員や学級などの基本設定は消えません）")) {
+                      clearSchedule();
+                    }
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 text-xs font-bold border border-rose-200 text-rose-600 bg-rose-50 rounded-lg hover:bg-rose-100 transition-all shadow-sm"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></svg>
+                  時間割をリセット
                 </button>
 
                 <button

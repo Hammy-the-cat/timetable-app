@@ -53,6 +53,7 @@ export interface TimetableStore {
 
   replaceData: (payload: TimetableData) => void;
   autoGenerate: () => void;
+  clearSchedule: () => void;
   reset: () => void;
 }
 
@@ -289,6 +290,20 @@ export const useTimetableStore = create<TimetableStore>()(
         set((state) => ({
           data: generateAutoTimetable(state.data),
         })),
+      clearSchedule: () =>
+        set((state) => {
+          const emptySchedule: Record<string, any> = {};
+          state.data.classes.forEach((cls) => {
+            emptySchedule[cls.id] = createEmptyWeek();
+          });
+          return {
+            data: {
+              ...state.data,
+              schedule: emptySchedule,
+              lastUpdated: now(),
+            },
+          };
+        }),
       reset: () =>
         set(() => ({
           data: createInitialData(),
