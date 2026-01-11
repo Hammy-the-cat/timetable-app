@@ -149,13 +149,28 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         });
     });
 
-    const getPartners = (subId: string, grade: number, clsId: string) => {
+    const getPartners = (subId: string, grade: number, clsId: string): string[] => {
+        const result = new Set<string>();
+        const queue = [clsId];
+        const visited = new Set<string>([clsId]);
         const gradeStr = grade.toString();
-        return Array.from(new Set([
-            ...(jointGroupsLookup[subId]?.[gradeStr]?.[clsId] || []),
-            ...(multiGradeLookup[subId]?.[clsId] || []),
-            ...(exchangeLookup[subId]?.[clsId] || [])
-        ]));
+
+        while (queue.length > 0) {
+            const currentId = queue.shift()!;
+            const partners = [
+                ...(jointGroupsLookup[subId]?.[gradeStr]?.[currentId] || []),
+                ...(multiGradeLookup[subId]?.[currentId] || []),
+                ...(exchangeLookup[subId]?.[currentId] || [])
+            ];
+            for (const p of partners) {
+                if (!visited.has(p)) {
+                    visited.add(p);
+                    result.add(p);
+                    queue.push(p);
+                }
+            }
+        }
+        return Array.from(result);
     };
 
     // ヘルパー：学校全体の特定スロットでの特定教科（体育など）の使用をチェック
