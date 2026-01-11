@@ -8,9 +8,13 @@ import {
   WeeklySlot,
 } from "./types";
 
-const filename = (prefix: string, ext: string) => {
-  const stamp = new Date().toISOString().replace(/[:T]/g, "-").split(".")[0];
-  return `${prefix}-${stamp}.${ext}`;
+const filename = (name: string, ext: string) => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const stamp = `${year}${month}${day}`;
+  return `${stamp}_${name}.${ext}`;
 };
 
 const getClassLabel = (cls: ClassGroup) => `${cls.grade}年${cls.label}組`;
@@ -37,7 +41,7 @@ export const downloadJson = (data: TimetableData) => {
   });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = filename("timetable", "json");
+  link.download = filename("時間割保存", "json");
   link.click();
   URL.revokeObjectURL(link.href);
 };
@@ -85,7 +89,7 @@ export const exportWorkbook = async (data: TimetableData) => {
   const buffer = await workbook.xlsx.writeBuffer();
   saveAs(
     new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-    filename("timetable", "xlsx")
+    filename("時間割Excel", "xlsx")
   );
 };
 
@@ -124,7 +128,7 @@ export const exportClassPdf = async (
     (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable
       ?.finalY ?? 24;
   doc.text(`最終更新: ${data.lastUpdated}`, 14, finalY + 10);
-  doc.save(filename(`${classId}-timetable`, "pdf"));
+  doc.save(filename(getClassLabel(cls), "pdf"));
 };
 
 export const describeSlotList = (slots: WeeklySlot[]) =>

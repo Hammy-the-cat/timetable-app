@@ -117,7 +117,7 @@ export function TimetableWorkspace() {
                   マスター編集モード
                 </span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <input
                   type="file"
                   id="import-json"
@@ -127,23 +127,28 @@ export function TimetableWorkspace() {
                 />
                 <label
                   htmlFor="import-json"
-                  className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded hover:bg-slate-50 transition-colors cursor-pointer"
+                  className="flex items-center gap-2 px-4 py-2 text-xs font-bold border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer shadow-sm bg-white"
                 >
-                  ファイル読み込み
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" /></svg>
+                  読み込み
                 </label>
+
                 <button
                   type="button"
                   onClick={() => exportWorkbook(data)}
-                  className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded hover:bg-slate-50 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 text-xs font-bold border border-emerald-100 text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-all shadow-sm"
                 >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14.5 2 14.5 7 20 7" /></svg>
                   Excel出力
                 </button>
+
                 <button
                   type="button"
                   onClick={() => downloadJson(data)}
-                  className="px-3 py-1.5 text-xs font-medium bg-brand-500 text-white rounded hover:bg-brand-600 transition-colors shadow-sm"
+                  className="flex items-center gap-2 px-5 py-2 text-xs font-black bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition-all shadow-md active:scale-95"
                 >
-                  保存（JSON）
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+                  すべての設定を保存
                 </button>
               </div>
             </div>
