@@ -285,10 +285,19 @@ export function SettingsPanel({
                   )}
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">所属学年 (総合の担当)</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">所属学年 (総合の担当)</label>
+                      <button
+                        type="button"
+                        onClick={() => setTeacherGrades([])}
+                        className={`text-[8px] px-1.5 py-0.5 rounded font-black border transition-all ${teacherGrades.length === 0 ? 'bg-slate-500 border-slate-600 text-white shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-slate-100'}`}
+                      >
+                        なし
+                      </button>
+                    </div>
                     <div className="flex gap-2">
                       {[1, 2, 3].map(g => (
-                        <label key={g} className="flex-1 flex items-center justify-center p-2 rounded-md border border-slate-200 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
+                        <label key={g} className={`flex-1 flex items-center justify-center p-2 rounded-md border transition-all cursor-pointer ${teacherGrades.includes(g) ? 'bg-brand-50 border-brand-500' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
                           <input
                             type="checkbox"
                             className="hidden"
@@ -474,11 +483,23 @@ export function SettingsPanel({
 
                         <div className="grid grid-cols-2 gap-2 mt-2">
                           <div className="space-y-1 p-2 bg-slate-50 rounded border border-slate-100">
-                            <label className="text-[8px] font-black text-slate-400 uppercase">所属学年(総合向け)</label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[8px] font-black text-slate-400 uppercase">所属学年(総合向け)</label>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  let subjects = t.subjects.filter((s: string) => s !== "総合" || t.role === "homeroom");
+                                  onUpdateTeacher(t.id, { taughtGrades: [], subjects });
+                                }}
+                                className={`text-[7px] px-1 py-0.5 rounded font-black border transition-all ${(!t.taughtGrades || t.taughtGrades.length === 0) ? 'bg-slate-500 border-slate-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-100'}`}
+                              >
+                                なし
+                              </button>
+                            </div>
                             <div className="flex gap-1">
                               {[1, 2, 3].map(g => (
-                                <label key={g} className="flex-1 flex items-center justify-center p-1 rounded border border-slate-200 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
-                                  <input type="checkbox" className="hidden" defaultChecked={t.taughtGrades?.includes(g)} onChange={(e) => {
+                                <label key={g} className={`flex-1 flex items-center justify-center p-1 rounded border transition-colors cursor-pointer ${t.taughtGrades?.includes(g) ? 'bg-brand-50 border-brand-500' : 'bg-white border-slate-200 hover:bg-brand-50'}`}>
+                                  <input type="checkbox" className="hidden" checked={t.taughtGrades?.includes(g)} onChange={(e) => {
                                     const nextGrades = e.target.checked ? [...(t.taughtGrades || []), g] : (t.taughtGrades || []).filter((gg: number) => gg !== g);
                                     let patch: any = { taughtGrades: nextGrades };
                                     let subjects = [...t.subjects];
@@ -486,7 +507,6 @@ export function SettingsPanel({
                                     if (nextGrades.length > 0 && !subjects.includes("総合")) {
                                       subjects.push("総合");
                                     } else if (nextGrades.length === 0 && subjects.includes("総合") && t.role !== "homeroom") {
-                                      // Only remove '総合' if no grades are assigned AND not a homeroom teacher
                                       subjects = subjects.filter(s => s !== "総合");
                                     }
                                     patch.subjects = subjects;
@@ -621,11 +641,17 @@ export function SettingsPanel({
                                 ) : null;
                               })
                             ) : (
-                              t.taughtGrades?.map((g: number) => (
-                                <span key={g} className="text-[9px] bg-indigo-50 text-indigo-500 px-1.5 py-0.5 rounded font-bold">
-                                  {g}年所属
+                              (t.taughtGrades?.length ?? 0) > 0 ? (
+                                t.taughtGrades?.map((g: number) => (
+                                  <span key={g} className="text-[9px] bg-indigo-50 text-indigo-500 px-1.5 py-0.5 rounded font-bold">
+                                    {g}年所属
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[9px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded font-bold">
+                                  学年所属なし
                                 </span>
-                              ))
+                              )
                             )}
                           </div>
                         </div>
@@ -1030,10 +1056,10 @@ export function SettingsPanel({
                                                       onUpdateSubject(s.id, { multiGradeGroups: nextGroups });
                                                     }}
                                                     className={`text-[8px] px-2 py-0.5 rounded transition-all font-bold border ${isInThisGroup
-                                                        ? "bg-indigo-500 border-indigo-600 text-white shadow-sm"
-                                                        : (isInAnyMultiGroup && !isInThisGroup)
-                                                          ? "bg-slate-100 border-slate-100 text-slate-200 opacity-30 cursor-not-allowed"
-                                                          : "bg-white border-slate-200 text-slate-400 hover:bg-slate-50 hover:border-indigo-200 shadow-sm"
+                                                      ? "bg-indigo-500 border-indigo-600 text-white shadow-sm"
+                                                      : (isInAnyMultiGroup && !isInThisGroup)
+                                                        ? "bg-slate-100 border-slate-100 text-slate-200 opacity-30 cursor-not-allowed"
+                                                        : "bg-white border-slate-200 text-slate-400 hover:bg-slate-50 hover:border-indigo-200 shadow-sm"
                                                       }`}
                                                   >
                                                     {c.label}組
