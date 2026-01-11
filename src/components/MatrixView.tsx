@@ -198,15 +198,17 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                             }
                                             const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== slot.day;
                                             const isUnavailable = teacher.unavailable.some(us => us.day === slot.day && us.period === slot.period);
-                                            const meetingName = getMeetingName(slot.day, slot.period);
+                                            const isParticipatingMeeting = teacher.meetingIds?.some(mid =>
+                                                data.meetings.find(m => m.id === mid && m.slots.some(s => s.day === slot.day && s.period === slot.period))
+                                            );
 
                                             return (
                                                 <td
                                                     key={i}
-                                                    className={`border border-slate-200 p-1 text-center h-14 min-w-[3.5rem] ${isUnavailable ? "bg-slate-100/50 slanted-stripes" : ""} ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''} ${meetingName ? 'bg-amber-50/10' : ''}`}
+                                                    className={`border border-slate-200 p-1 text-center h-14 min-w-[3.5rem] ${isUnavailable ? "bg-slate-100/50 slanted-stripes" : ""} ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''} ${isParticipatingMeeting ? 'bg-amber-50/20' : ''}`}
                                                 >
-                                                    {meetingName ? (
-                                                        <span className="text-[9px] font-bold text-amber-500 opacity-40">
+                                                    {isParticipatingMeeting ? (
+                                                        <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1 rounded border border-amber-100 uppercase tracking-tighter">
                                                             会議
                                                         </span>
                                                     ) : (
