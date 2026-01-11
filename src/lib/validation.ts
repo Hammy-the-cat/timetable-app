@@ -70,6 +70,20 @@ export const collectWarnings = (
           )}と重複しています。`,
         });
       }
+
+      // 参加する会議との重複チェック
+      if (teacher.meetingIds && teacher.meetingIds.length > 0) {
+        const teacherMeetingConflict = data.meetings.find(m =>
+          teacher.meetingIds?.includes(m.id) &&
+          m.slots.some(s => slotEquals(s, slot))
+        );
+        if (teacherMeetingConflict) {
+          warnings.push({
+            type: "meetingBlock",
+            message: `${teacher.name}は「${teacherMeetingConflict.name}」に出席するため、この時間は不可です。`,
+          });
+        }
+      }
     }
   }
 

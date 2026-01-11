@@ -41,6 +41,7 @@ export interface Teacher {
   role?: "homeroom" | "assistant";
   homeroomClassIds?: string[];
   unavailable: WeeklySlot[];
+  meetingIds?: string[]; // 参加する会議のID
 }
 
 export interface Classroom {

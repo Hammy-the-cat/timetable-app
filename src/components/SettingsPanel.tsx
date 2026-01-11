@@ -162,6 +162,7 @@ export function SettingsPanel({
   const [teacherClasses, setTeacherClasses] = useState<string[]>([]);
   const [teacherRole, setTeacherRole] = useState<"homeroom" | "assistant">("assistant");
   const [teacherHomeroomClassIds, setTeacherHomeroomClassIds] = useState<string[]>([]);
+  const [teacherMeetings, setTeacherMeetings] = useState<string[]>([]);
 
   const [roomName, setRoomName] = useState("");
   const [roomType, setRoomType] = useState<"standard" | "special">("standard");
@@ -332,6 +333,28 @@ export function SettingsPanel({
                       ))}
                     </div>
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">参加する会議</label>
+                    <div className="grid grid-cols-2 gap-1 max-h-32 overflow-y-auto p-1 border border-slate-100 rounded bg-white">
+                      {meetings.map(m => (
+                        <label key={m.id} className="flex items-center gap-1.5 p-1 px-2 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
+                          <input
+                            type="checkbox"
+                            className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
+                            checked={teacherMeetings.includes(m.id)}
+                            onChange={() => {
+                              setTeacherMeetings(prev =>
+                                prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id]
+                              );
+                            }}
+                          />
+                          <span className={`text-[9px] font-bold ${teacherMeetings.includes(m.id) ? 'text-brand-600' : 'text-slate-400'}`}>
+                            {m.name}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 <input
@@ -372,10 +395,12 @@ export function SettingsPanel({
                     taughtGrades: teacherGrades,
                     role: teacherRole,
                     homeroomClassIds: teacherRole === "homeroom" ? teacherHomeroomClassIds : [],
-                    unavailable: teacherBlocks
+                    unavailable: teacherBlocks,
+                    meetingIds: teacherMeetings
                   });
                   setTeacherName(""); setTeacherSubjects(""); setTeacherClasses([]); setTeacherBlocks([]);
                   setTeacherRole("assistant"); setTeacherHomeroomClassIds([]); setTeacherGrades([]);
+                  setTeacherMeetings([]);
                 }}
                 className="w-full py-2 bg-brand-500 text-white rounded-md text-sm font-bold shadow-sm hover:bg-brand-600 transition-colors"
               >
@@ -533,6 +558,30 @@ export function SettingsPanel({
                           </div>
                         </div>
 
+                        <div className="mt-2 space-y-1 p-2 bg-slate-50 rounded border border-slate-100">
+                          <label className="text-[8px] font-black text-slate-400 uppercase">参加する会議</label>
+                          <div className="grid grid-cols-3 gap-0.5 max-h-24 overflow-y-auto">
+                            {meetings.map(m => (
+                              <label key={m.id} className="flex items-center gap-1 p-1 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
+                                  checked={t.meetingIds?.includes(m.id)}
+                                  onChange={() => {
+                                    const next = t.meetingIds?.includes(m.id)
+                                      ? t.meetingIds.filter((id: string) => id !== m.id)
+                                      : [...(t.meetingIds || []), m.id];
+                                    onUpdateTeacher(t.id, { meetingIds: next });
+                                  }}
+                                />
+                                <span className={`text-[8px] font-bold ${t.meetingIds?.includes(m.id) ? 'text-brand-600' : 'text-slate-400'}`}>
+                                  {m.name}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
                         {t.role === "homeroom" && (
                           <div className="mt-2 space-y-1">
                             <label className="text-[8px] font-black text-slate-400 uppercase">担任学級(道徳・学活向け)</label>
@@ -656,6 +705,20 @@ export function SettingsPanel({
                           </div>
                         </div>
                         <span className="text-[11px] text-slate-500 font-medium">{t.subjects.join(", ") || "担当未設定"}</span>
+
+                        {(t.meetingIds?.length ?? 0) > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {t.meetingIds?.map((mid: string) => {
+                              const m = meetings.find(meeting => meeting.id === mid);
+                              return m ? (
+                                <span key={mid} className="text-[9px] bg-teal-50 text-teal-600 border border-teal-100 px-1.5 py-0.5 rounded font-bold">
+                                  会: {m.name}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        )}
+
                         {t.unavailable.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
                             {t.unavailable.map((s: any) => (

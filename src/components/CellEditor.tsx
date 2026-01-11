@@ -33,6 +33,15 @@ export function CellEditor({
       return false;
     }
 
+    // 会議重複フィルター
+    if (t.meetingIds && t.meetingIds.length > 0) {
+      const hasMeeting = data.meetings.some(m =>
+        t.meetingIds?.includes(m.id) &&
+        m.slots.some(s => s.day === slot.day && s.period === slot.period)
+      );
+      if (hasMeeting) return false;
+    }
+
     // 2. 教科別の絞り込みロジック
     const subName = selectedSubject?.name || "";
 
