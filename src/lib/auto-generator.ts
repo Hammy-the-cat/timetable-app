@@ -111,7 +111,6 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     });
 
     // 連動情報の整理
-    // 連動情報の整理
     const jointGroupsLookup: any = {};
     const multiGradeLookup: any = {};
     const exchangeLookup: any = {};
@@ -157,34 +156,33 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         });
 
         // --- 4. 教員設定に基づく自動合同判定 ---
-        // 同じ学年で、担当教師が完全に一致するクラスは「合同」とみなす（特に体育などで重要）
+        // 同じ教科・同じ学年で、担当教師が完全に一致するクラスは合同とみなす
+        // ★重要：体育または明示的な合同教科の場合のみ判定する（他教科の巻き込み事故防止）
         teacherJointLookup[sub.id] = {};
-        const classTeachers: Record<string, string[]> = {};
-        classes.forEach(c => {
-            classTeachers[c.id] = teachers
-                .filter(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(c.id)))
-                .map(t => t.id)
-                .sort();
-        });
+        if (sub.name === "体育" || sub.isJointSubject) {
+            const classTeachers: Record<string, string[]> = {};
+            classes.forEach(c => {
+                classTeachers[c.id] = teachers
+                    .filter(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(c.id)))
+                    .map(t => t.id)
+                    .sort();
+            });
 
-        // 同じ教師セットを持つクラス同士をリンク
-        const grades = Array.from(new Set(classes.map(c => c.grade)));
-        grades.forEach(g => {
-            const targetClasses = classes.filter(c => c.grade === g);
-            targetClasses.forEach(cA => {
+            classes.forEach(cA => {
                 const tA = classTeachers[cA.id];
                 if (tA.length === 0) return;
-                targetClasses.forEach(cB => {
+                classes.forEach(cB => {
                     if (cA.id === cB.id) return;
                     const tB = classTeachers[cB.id];
-                    // 教師が完全に一致する場合
-                    if (tA.length === tB.length && tA.every((v, i) => v === tB[i])) {
-                        if (!teacherJointLookup[sub.id][cA.id]) teacherJointLookup[sub.id][cA.id] = [];
-                        if (!teacherJointLookup[sub.id][cA.id].includes(cB.id)) teacherJointLookup[sub.id][cA.id].push(cB.id);
+                    if (cA.grade === cB.grade || sub.isMultiGrade) {
+                        if (tA.length === tB.length && tA.every((v, i) => v === tB[i])) {
+                            if (!teacherJointLookup[sub.id][cA.id]) teacherJointLookup[sub.id][cA.id] = [];
+                            teacherJointLookup[sub.id][cA.id].push(cB.id);
+                        }
                     }
                 });
             });
-        });
+        }
     });
 
     // 芋づる式にすべてのパートナーを取得する関数
@@ -197,15 +195,14 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         while (queue.length > 0) {
             const currentId = queue.shift()!;
 
-            // 全ての接続元から候補を取得
-            const directPartners = [
+            const partners = [
                 ...(jointGroupsLookup[subId]?.[gradeStr]?.[currentId] || []),
                 ...(multiGradeLookup[subId]?.[currentId] || []),
                 ...(exchangeLookup[subId]?.[currentId] || []),
                 ...(teacherJointLookup[subId]?.[currentId] || [])
             ];
 
-            for (const p of directPartners) {
+            for (const p of partners) {
                 if (!visited.has(p)) {
                     visited.add(p);
                     result.add(p);
