@@ -178,6 +178,9 @@ export function SettingsPanel({
   const [classSpecialType, setClassSpecialType] = useState<"intellectual" | "emotional" | "physical">("intellectual");
   const [classExchangeClassId, setClassExchangeClassId] = useState("");
 
+  const [subjectFixedSlots, setSubjectFixedSlots] = useState<WeeklySlot[]>([]);
+  const [subjectFixedSlot, setSubjectFixedSlot] = useState<WeeklySlot>(defaultSlot);
+
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const toggleAssignmentClass = (subjectName: string, classId: string, assignments: SubjectAssignment[], setter: (val: SubjectAssignment[]) => void) => {
@@ -593,7 +596,7 @@ export function SettingsPanel({
                                     // Remove assignment if subject is removed
                                     let nextAssignments = t.subjectAssignments || [];
                                     if (!next.includes(subName)) {
-                                      nextAssignments = nextAssignments.filter(a => a.subjectName !== subName);
+                                      nextAssignments = nextAssignments.filter((a: SubjectAssignment) => a.subjectName !== subName);
                                     }
 
                                     onUpdateTeacher(t.id, { subjects: next, subjectAssignments: nextAssignments });
@@ -1034,17 +1037,31 @@ export function SettingsPanel({
                   複数クラス合同授業の対象
                 </label>
               </div>
+              <div className="space-y-2 pt-2 border-t border-slate-200">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">固定配置（全学級共通）</label>
+                <SlotPicker slot={subjectFixedSlot} onChange={setSubjectFixedSlot} />
+                <button
+                  type="button"
+                  className="w-full text-[10px] bg-slate-200 hover:bg-slate-300 py-1.5 rounded font-bold transition-colors"
+                  onClick={() => appendSlot(subjectFixedSlot, subjectFixedSlots, setSubjectFixedSlots)}
+                >
+                  固定コマを追加
+                </button>
+                <SlotList value={subjectFixedSlots} onRemove={(s) => removeSlot(s, subjectFixedSlots, setSubjectFixedSlots)} />
+              </div>
               <button
                 onClick={() => {
                   if (!subjectName.trim()) return;
                   onAddSubject({
                     name: subjectName.trim(),
                     weeklyQuota: subjectQuota,
-                    isJointSubject: subjectIsJoint
+                    isJointSubject: subjectIsJoint,
+                    fixedSlots: subjectFixedSlots
                   });
                   setSubjectName("");
                   setSubjectQuota(1);
                   setSubjectIsJoint(false);
+                  setSubjectFixedSlots([]);
                 }}
                 className="w-full py-2 bg-brand-500 text-white rounded-md text-sm font-bold shadow-sm hover:bg-brand-600 transition-colors"
               >
@@ -1324,6 +1341,45 @@ export function SettingsPanel({
                               </p>
                             </div>
                           )}
+
+                          <div className="space-y-2 border-t border-slate-100 pt-3">
+                            <span className="text-[9px] font-black text-slate-400 block ml-1 uppercase">固定配置設定</span>
+                            <div className="flex flex-wrap gap-1 mb-2">
+                              {s.fixedSlots?.map((slot, idx) => (
+                                <span key={idx} className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 flex items-center gap-1">
+                                  {formatSlot(slot)}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const next = s.fixedSlots?.filter((_, i) => i !== idx);
+                                      onUpdateSubject(s.id, { fixedSlots: next });
+                                    }}
+                                    className="text-rose-500 font-bold"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                              {(!s.fixedSlots || s.fixedSlots.length === 0) && <span className="text-[9px] text-slate-400 italic ml-1">なし</span>}
+                            </div>
+                            <div className="flex gap-2 items-end">
+                              <div className="flex-1">
+                                <SlotPicker slot={subjectFixedSlot} onChange={setSubjectFixedSlot} />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const next = [...(s.fixedSlots || []), subjectFixedSlot];
+                                  if (!s.fixedSlots?.some(x => x.day === subjectFixedSlot.day && x.period === subjectFixedSlot.period)) {
+                                    onUpdateSubject(s.id, { fixedSlots: next });
+                                  }
+                                }}
+                                className="text-[9px] bg-brand-500 text-white px-2 py-1.5 rounded font-bold hover:bg-brand-600"
+                              >
+                                追加
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                       <p className="text-[8px] text-slate-400 leading-tight italic">※入力した数値はその学年の専用設定として保存されます。未設定の学年は全体基準を引き継ぎます。</p>
@@ -1429,6 +1485,20 @@ export function SettingsPanel({
                                       </span>
                                     );
                                   })}
+                                </div>
+                              </div>
+                            )}
+                            {s.fixedSlots && s.fixedSlots.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1 w-full border-t border-slate-50 pt-1">
+                                <span className="text-[7px] bg-rose-50 text-rose-600 border border-rose-200 px-1 py-0.5 rounded font-black flex items-center gap-0.5 w-fit">
+                                  <span className="w-1 h-1 bg-rose-500 rounded-full" /> 固定配置
+                                </span>
+                                <div className="flex flex-wrap gap-1 ml-1">
+                                  {s.fixedSlots.map((slot, idx) => (
+                                    <span key={idx} className="text-[7px] text-rose-500 font-bold bg-rose-50/50 px-1 border border-rose-100 rounded">
+                                      {formatSlot(slot)}
+                                    </span>
+                                  ))}
                                 </div>
                               </div>
                             )}
