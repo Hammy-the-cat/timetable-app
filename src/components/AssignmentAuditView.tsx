@@ -34,13 +34,28 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
             const shortages = subjects.map(sub => {
                 const target = getEffectiveQuota(sub, cls.grade, cls.type || "normal", cls.specialType);
                 const current = subjectCounts[sub.id] || 0;
-                return { name: sub.name, target, current, diff: target - current };
-            }).filter(s => s.diff > 0);
+
+                // 誰がこの学級のこの教科を教えるはずか特定
+                let plannedTeacherName = "未定";
+                if (sub.name === "道徳" || sub.name === "学活") {
+                    const hr = teachers.find(t => t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id));
+                    plannedTeacherName = hr ? hr.name : "未定";
+                } else if (sub.name === "総合") {
+                    const eligible = teachers.filter(t => t.taughtGrades?.includes(cls.grade) || (t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id)));
+                    plannedTeacherName = eligible.length > 0 ? eligible.map(e => e.name).join("/") : "学年所属未設定";
+                } else {
+                    const assigned = teachers.find(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id)));
+                    plannedTeacherName = assigned ? assigned.name : "未設定";
+                }
+
+                return { name: sub.name, target, current, diff: target - current, plannedTeacherName };
+            }).filter(s => s.target > 0);
 
             return {
                 id: cls.id,
                 label: `${cls.grade}-${cls.label}`,
-                shortages,
+                shortages: shortages.filter(s => s.diff > 0),
+                allSubjects: shortages,
                 pendingTeacherCount: pendingSlots.length,
                 pendingSlots,
                 homeroomTeacher: teachers.find(t => t.id === cls.homeroomTeacherId)?.name || "未設定"
@@ -51,14 +66,15 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
     // 各教員の稼働状況サマリー
     const teacherStatus = useMemo(() => {
         return teachers.map((teacher) => {
-            let assignedCount = 0;
+            let actualCount = 0;
             const classAssignments: Record<string, string[]> = {};
 
+            // 実績の集計
             Object.entries(schedule).forEach(([classId, week]) => {
                 Object.values(week).forEach((periods) => {
                     Object.values(periods).forEach((cell) => {
                         if (cell.teacherId === teacher.id) {
-                            assignedCount++;
+                            actualCount++;
                             const cls = classes.find(c => c.id === classId);
                             if (cls) {
                                 const label = `${cls.grade}-${cls.label}`;
@@ -71,13 +87,40 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
                 });
             });
 
+            // 計画（想定）時数の計算
+            let plannedHours = 0;
+            const plannedDetails: string[] = [];
+
+            classes.forEach(cls => {
+                subjects.forEach(sub => {
+                    const target = getEffectiveQuota(sub, cls.grade, cls.type || "normal", cls.specialType);
+                    if (target <= 0) return;
+
+                    let isAssigned = false;
+                    if (sub.name === "道徳" || sub.name === "学活") {
+                        if (teacher.role === "homeroom" && teacher.homeroomClassIds?.includes(cls.id)) isAssigned = true;
+                    } else if (sub.name === "総合") {
+                        // 総合は「学年所属」または「担任」が担当可能。ここでは「学年所属」を主として計算に含める
+                        if (teacher.taughtGrades?.includes(cls.grade)) isAssigned = true;
+                    } else {
+                        if (teacher.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id))) isAssigned = true;
+                    }
+
+                    if (isAssigned) {
+                        plannedHours += target;
+                        plannedDetails.push(`${cls.grade}-${cls.label}(${sub.name})`);
+                    }
+                });
+            });
+
             return {
                 id: teacher.id,
                 name: teacher.name,
-                assignedCount,
+                actualCount,
+                plannedHours,
+                plannedDetails,
                 classAssignments,
                 role: teacher.role === "homeroom" ? "担任" : "専科/副担",
-                subjects: teacher.subjects,
             };
         });
     }, [teachers, classes, subjects, schedule]);
@@ -113,7 +156,7 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
                         <thead>
                             <tr className="bg-slate-50">
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">クラス</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">担任</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">主な担当配置 (計画)</th>
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">不足コマ数 (配当コマ未達)</th>
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">教官未設定のコマ</th>
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">ステータス</th>
@@ -124,9 +167,20 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
                                 <tr key={cls.id} className="hover:bg-slate-50/50 transition-colors">
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className="text-lg font-black text-slate-800">{cls.label}</span>
+                                        <div className="text-[10px] font-bold text-slate-400 mt-1">担任: {cls.homeroomTeacher}</div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className="text-xs font-bold text-slate-600">{cls.homeroomTeacher}</span>
+                                    <td className="px-6 py-4">
+                                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                            {cls.allSubjects.slice(0, 6).map((s, i) => (
+                                                <div key={i} className="flex justify-between items-center bg-slate-50 px-2 py-1 rounded">
+                                                    <span className="text-[9px] font-bold text-slate-500">{s.name}</span>
+                                                    <span className={`text-[9px] font-black ${s.plannedTeacherName === "未設定" ? "text-rose-400" : "text-indigo-600"}`}>
+                                                        {s.plannedTeacherName}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                            {cls.allSubjects.length > 6 && <span className="text-[8px] text-slate-300 font-bold ml-2">...ほか</span>}
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4">
                                         {cls.shortages.length > 0 ? (
@@ -138,7 +192,7 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
                                                 ))}
                                             </div>
                                         ) : (
-                                            <span className="text-[10px] text-emerald-500 font-black uppercase">Complete</span>
+                                            <span className="text-[10px] text-emerald-500 font-black uppercase tracking-widest">Completed</span>
                                         )}
                                     </td>
                                     <td className="px-6 py-4">
@@ -152,19 +206,19 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
                                                 </div>
                                             </div>
                                         ) : (
-                                            <span className="text-[10px] text-emerald-500 font-black uppercase">All Set</span>
+                                            <span className="text-[10px] text-emerald-500 font-black uppercase tracking-widest">All Assigned</span>
                                         )}
                                     </td>
                                     <td className="px-6 py-4">
                                         {(cls.shortages.length === 0 && cls.pendingTeacherCount === 0) ? (
                                             <div className="flex items-center gap-2 text-emerald-600">
-                                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                                                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
                                                 <span className="text-xs font-black">正常</span>
                                             </div>
                                         ) : (
                                             <div className="flex items-center gap-2 text-rose-500">
-                                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                                                <span className="text-xs font-black">未完了</span>
+                                                <div className="w-2 h-2 bg-rose-500 rounded-full" />
+                                                <span className="text-xs font-black">調整中</span>
                                             </div>
                                         )}
                                     </td>
@@ -179,7 +233,7 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
             <section className="space-y-4">
                 <div className="flex items-center gap-3">
                     <div className="w-2 h-8 bg-indigo-500 rounded-full" />
-                    <h3 className="text-xl font-black text-slate-800 tracking-tight">教員別・負荷及び設定状況一覧</h3>
+                    <h3 className="text-xl font-black text-slate-800 tracking-tight">教員別・負荷及び設定進捗一覧</h3>
                 </div>
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
                     <table className="w-full border-separate border-spacing-0 text-left">
@@ -187,49 +241,74 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
                             <tr className="bg-slate-50">
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">氏名</th>
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">役割</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">週当たり時数</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">設定進捗 (実績 / 計画)</th>
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">主な担当学級</th>
                                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">状態</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {teacherStatus.map((t) => (
-                                <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className="text-base font-black text-slate-800">{t.name}</span>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-black uppercase ${t.role === "担任" ? "bg-brand-500 text-white" : "bg-slate-100 text-slate-500"}`}>
-                                            {t.role}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="flex items-baseline gap-1">
-                                            <span className="text-lg font-black text-slate-800">{t.assignedCount}</span>
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase">コマ / 週</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        <div className="flex flex-wrap gap-2">
-                                            {Object.entries(t.classAssignments).map(([cls, subs]) => (
-                                                <div key={cls} className="flex flex-col p-1.5 bg-slate-50 rounded-lg border border-slate-100">
-                                                    <span className="text-[9px] font-black text-indigo-600 leading-none mb-1">{cls}</span>
-                                                    <span className="text-[8px] font-bold text-slate-400 leading-none">{subs.slice(0, 3).join(", ")}{subs.length > 3 ? "..." : ""}</span>
+                            {teacherStatus.map((t) => {
+                                const isComplete = t.actualCount >= t.plannedHours && t.plannedHours > 0;
+                                const isOverLoaded = t.actualCount > 24;
+                                const progress = t.plannedHours > 0 ? (t.actualCount / t.plannedHours) * 100 : 0;
+
+                                return (
+                                    <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <span className="text-base font-black text-slate-800">{t.name}</span>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-black uppercase ${t.role === "担任" ? "bg-brand-500 text-white shadow-sm" : "bg-slate-100 text-slate-500"}`}>
+                                                {t.role}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex flex-col gap-2 min-w-[150px]">
+                                                <div className="flex items-baseline justify-between">
+                                                    <div className="flex items-baseline gap-1">
+                                                        <span className={`text-lg font-black ${isComplete ? "text-emerald-600" : "text-slate-800"}`}>{t.actualCount}</span>
+                                                        <span className="text-[10px] font-bold text-slate-400">/ {t.plannedHours} コマ</span>
+                                                    </div>
+                                                    <span className={`text-[10px] font-black ${progress >= 100 ? "text-emerald-500" : "text-slate-400"}`}>
+                                                        {Math.round(progress)}%
+                                                    </span>
                                                 </div>
-                                            ))}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        {t.assignedCount === 0 ? (
-                                            <span className="text-xs font-black text-slate-300 uppercase italic">Idle</span>
-                                        ) : t.assignedCount > 24 ? (
-                                            <span className="text-xs font-black text-rose-500 bg-rose-50 px-2 py-0.5 rounded border border-rose-100">負荷過多</span>
-                                        ) : (
-                                            <span className="text-xs font-black text-emerald-500">稼働中</span>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
+                                                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                                    <div
+                                                        className={`h-full transition-all duration-500 ${progress >= 100 ? "bg-emerald-500" : "bg-indigo-500"}`}
+                                                        style={{ width: `${Math.min(progress, 100)}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="flex flex-wrap gap-2">
+                                                {Object.entries(t.classAssignments).length > 0 ? Object.entries(t.classAssignments).map(([cls, subs]) => (
+                                                    <div key={cls} className="flex flex-col p-1.5 bg-slate-50 rounded-lg border border-slate-100">
+                                                        <span className="text-[9px] font-black text-indigo-600 leading-none mb-1">{cls}</span>
+                                                        <span className="text-[8px] font-bold text-slate-400 leading-none">{subs.slice(0, 3).join(", ")}{subs.length > 3 ? "..." : ""}</span>
+                                                    </div>
+                                                )) : (
+                                                    <span className="text-[9px] text-slate-300 font-bold uppercase italic tracking-widest">No assigned yet</span>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="flex flex-col gap-1">
+                                                {isOverLoaded ? (
+                                                    <span className="text-[10px] font-black text-rose-500 bg-rose-50 px-2 py-0.5 rounded border border-rose-100 text-center uppercase">Overloaded</span>
+                                                ) : isComplete ? (
+                                                    <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 text-center uppercase">Complete</span>
+                                                ) : t.plannedHours > 0 ? (
+                                                    <span className="text-[10px] font-black text-amber-500 bg-amber-50 px-2 py-0.5 rounded border border-amber-100 text-center uppercase">In Progress</span>
+                                                ) : (
+                                                    <span className="text-[10px] font-black text-slate-300 bg-slate-50 px-2 py-0.5 rounded border border-slate-100 text-center uppercase">Idle</span>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
