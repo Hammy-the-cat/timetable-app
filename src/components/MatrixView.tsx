@@ -217,6 +217,104 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                 </div>
             </div>
 
+            {/* Bottom Part: Summary Statistics */}
+            <div className="space-y-4 pb-24">
+                <div className="flex items-center gap-3">
+                    <span className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-200">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor font-bold">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                    </span>
+                    <div className="flex flex-col">
+                        <h3 className="text-lg font-black text-slate-800">授業時数・担当者集計表</h3>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase">Weekly Lesson Count & Teacher Assignment Summary</p>
+                    </div>
+                </div>
+
+                <div className="overflow-hidden shadow-2xl shadow-slate-200 border border-slate-200 rounded-2xl bg-white">
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-[10px]">
+                            <thead>
+                                <tr className="bg-slate-50 border-b border-slate-200">
+                                    <th className="border-r border-slate-200 p-3 sticky left-0 z-40 bg-slate-50 text-slate-500 font-black uppercase w-24">学級</th>
+                                    {data.subjects.map(s => (
+                                        <th key={s.id} className="border-r border-slate-200 p-2 text-slate-600 font-black min-w-[80px]">
+                                            {s.name}
+                                        </th>
+                                    ))}
+                                    <th className="p-3 bg-slate-800 text-white font-black uppercase w-20">合計</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.classes.map(cls => {
+                                    const classSchedule = data.schedule[cls.id] || {};
+                                    let totalHours = 0;
+
+                                    // 時数計算と担当者特定
+                                    const stats = data.subjects.map(subject => {
+                                        let count = 0;
+                                        const teachers = new Set<string>();
+
+                                        Object.values(classSchedule).forEach(day => {
+                                            Object.values(day).forEach(cell => {
+                                                if (cell.subjectId === subject.id) {
+                                                    count++;
+                                                    totalHours++;
+                                                    if (cell.teacherId) {
+                                                        const t = data.teachers.find(teacher => teacher.id === cell.teacherId);
+                                                        if (t) teachers.add(t.name);
+                                                    }
+                                                }
+                                            });
+                                        });
+
+                                        return {
+                                            count,
+                                            teacherNames: Array.from(teachers).join(", ")
+                                        };
+                                    });
+
+                                    return (
+                                        <tr key={cls.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group">
+                                            <td className="border-r border-slate-200 p-3 font-black text-slate-800 sticky left-0 z-10 bg-white group-hover:bg-slate-50 text-center">
+                                                {getClassLabel(cls)}
+                                            </td>
+                                            {stats.map((stat, idx) => (
+                                                <td key={idx} className="border-r border-slate-100 p-2 text-center align-middle">
+                                                    {stat.count > 0 ? (
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <span className="font-bold text-slate-900">{stat.count}h</span>
+                                                            <span className="text-[8px] text-slate-400 font-medium truncate max-w-[70px] mx-auto" title={stat.teacherNames}>
+                                                                {stat.teacherNames}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-slate-200">-</span>
+                                                    )}
+                                                </td>
+                                            ))}
+                                            <td className={`p-3 text-center font-black text-sm ${totalHours !== 29 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                                {totalHours}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div className="flex items-center gap-4 bg-white p-3 rounded-xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 bg-rose-500 rounded-sm" />
+                        <span className="text-[10px] font-bold text-slate-500">29時間以外</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 bg-emerald-500 rounded-sm" />
+                        <span className="text-[10px] font-bold text-slate-500">29時間（正常）</span>
+                    </div>
+                </div>
+            </div>
+
             <style jsx>{`
                 .slanted-stripes {
                     background-image: repeating-linear-gradient(
