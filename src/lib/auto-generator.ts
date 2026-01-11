@@ -61,6 +61,20 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
         }
     });
 
+    // --- 前準備: 複式授業のグループ情報を整理 ---
+    // subjectId -> { [classId]: otherClassIds[] }
+    const multiGradeLookup: Record<string, Record<string, string[]>> = {};
+    subjects.forEach(sub => {
+        if (sub.isMultiGrade && sub.multiGradeGroups) {
+            multiGradeLookup[sub.id] = {};
+            sub.multiGradeGroups.forEach(groupSpecs => {
+                groupSpecs.forEach(cid => {
+                    multiGradeLookup[sub.id][cid] = groupSpecs.filter(other => other !== cid);
+                });
+            });
+        }
+    });
+
     // --- ユーティリティ: 教師の空き確認 ---
     const checkTeacherFree = (tId: string, day: Weekday, period: number, currentSchedule: any): boolean => {
         const teacher = teachers.find(t => t.id === tId);
@@ -132,26 +146,28 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
             pool.sort(() => Math.random() - 0.5);
 
             for (const candidate of pool) {
-                // 合同授業の対象者を確認
+                // 合同授業または複式授業の対象者を確認
                 const jointPartners = jointGroupsLookup[candidate.subjectId]?.[cls.grade]?.[cls.id] || [];
+                const multiGradePartners = multiGradeLookup[candidate.subjectId]?.[cls.id] || [];
+                const allPartners = Array.from(new Set([...jointPartners, ...multiGradePartners]));
 
                 // --- 1. 全員の空き状況チェック ---
-                const partnersToAssign = jointPartners.filter(pId => {
+                const partnersToAssign = allPartners.filter(pId => {
                     const cell = newSchedule[pId]?.[slot.day]?.[slot.period];
                     return !cell || !cell.subjectId;
                 });
 
-                // 合同なのに対象学級が埋まっている場合はスキップ
-                if (jointPartners.length > 0 && partnersToAssign.length !== jointPartners.length) continue;
+                // 合同/複式なのに対象学級が埋まっている場合はスキップ
+                if (allPartners.length > 0 && partnersToAssign.length !== allPartners.length) continue;
 
                 // 対象学級が既に本日その教科をやっている場合もスキップ
-                const anyPartnerHasSubjectToday = jointPartners.some(pId => getSubjectsToday(pId).includes(candidate.subjectId));
+                const anyPartnerHasSubjectToday = allPartners.some(pId => getSubjectsToday(pId).includes(candidate.subjectId));
                 if (anyPartnerHasSubjectToday) continue;
 
                 // --- 2. 教員の空き状況チェック ---
-                // 合同授業の場合、全学級に割り当てられた教員全員を集合させる
+                // 合同/複式授業の場合、全学級に割り当てられた教員全員を集合させる
                 const allPlannedTeachers = new Set<string>(candidate.teacherIds);
-                jointPartners.forEach(pId => {
+                allPartners.forEach(pId => {
                     const pNeed = classNeeds[pId].find(n => n.subjectId === candidate.subjectId);
                     if (pNeed) pNeed.teacherIds.forEach(tid => allPlannedTeachers.add(tid));
                 });
@@ -177,7 +193,7 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
                 if (hrViolation) continue;
 
                 // --- 4. 配置実行 ---
-                const classesToUpdate = [cls.id, ...jointPartners];
+                const classesToUpdate = [cls.id, ...allPartners];
                 classesToUpdate.forEach(cId => {
                     if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
                     newSchedule[cId][slot.day][slot.period] = {
