@@ -2,15 +2,16 @@ import { TimetableData, Weekday, ScheduleCell, Teacher, Subject, ClassGroup, Wee
 import { DAY_CONFIGS, getEffectiveQuota } from "./school";
 
 /**
- * タイムテーブル自動生成エンジン (Professional Optimizer Edition)
- * 複数の試行を行い、最も充填率の高いスケジュールを選択。
- * また、後半に空きコマを埋めるためのスワップ（入れ替え）ロジックを搭載。
+ * タイムテーブル自動生成エンジン (Elite Multi-Pass Optimizer)
+ * 100回の試行を行い、最も高い充填率と制約遵守率を持つスケジュールを選択します。
  */
 export function generateAutoTimetable(data: TimetableData): TimetableData {
-    // 最大試行回数を設定
-    const MAX_ATTEMPTS = 8;
+    const MAX_ATTEMPTS = 100; // ユーザーの要望に応え、試行回数を大幅に増加
     let bestSchedule: any = null;
     let bestScore = -1;
+
+    // 合計で埋めるべき全コマ数を計算
+    const targetTotalSlots = data.classes.length * DAY_CONFIGS.reduce((sum, d) => sum + d.periods, 0);
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const result = runSingleGenerationAttempt(data);
@@ -21,8 +22,8 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
             bestSchedule = result;
         }
 
-        // 全てのコマが埋まったらその時点で終了
-        if (score >= calculateMaxTotalSlots(data)) break;
+        // 完璧に埋まったら即座に終了
+        if (score >= targetTotalSlots) break;
     }
 
     return {
@@ -30,13 +31,6 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
         schedule: bestSchedule,
         lastUpdated: new Date().toISOString()
     };
-}
-
-function calculateMaxTotalSlots(data: TimetableData): number {
-    return data.classes.reduce((acc, cls) => {
-        const slots = DAY_CONFIGS.reduce((sum, d) => sum + d.periods, 0);
-        return acc + slots;
-    }, 0);
 }
 
 function calculateFillScore(schedule: any, classes: ClassGroup[]): number {
@@ -55,8 +49,8 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     const { classes, teachers, subjects, schedule } = data;
     const newSchedule = JSON.parse(JSON.stringify(schedule));
 
-    // --- 各クラスの必要時数を算出 ---
-    const classNeeds: Record<string, { subjectId: string; count: number; teacherIds: string[] }[]> = {};
+    // 1. 各クラスの必要時数を算出
+    const classNeeds: Record<string, { subjectId: string; count: number; teacherIds: string[]; isJoint: boolean }[]> = {};
     classes.forEach(cls => {
         classNeeds[cls.id] = subjects.map(sub => {
             const quota = getEffectiveQuota(sub, cls.grade, cls.type || "normal", cls.specialType);
@@ -83,11 +77,11 @@ function runSingleGenerationAttempt(data: TimetableData): any {
                     .filter(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id)))
                     .map(t => t.id);
             }
-            return { subjectId: sub.id, count: remaining, teacherIds: assignedTeacherIds };
+            return { subjectId: sub.id, count: remaining, teacherIds: assignedTeacherIds, isJoint: !!sub.isJointSubject };
         }).filter(n => n.count > 0);
     });
 
-    // パートナー情報の整理キャッシング
+    // 2. 連動グループ情報の整理 (型不一致を修正: grade を string として扱う)
     const jointGroupsLookup: any = {};
     const multiGradeLookup: any = {};
     const exchangeLookup: any = {};
@@ -95,10 +89,11 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     subjects.forEach(sub => {
         if (sub.isJointSubject && sub.jointClassGroups) {
             jointGroupsLookup[sub.id] = {};
-            Object.entries(sub.jointClassGroups).forEach(([g, groups]) => {
-                jointGroupsLookup[sub.id][g] = {};
+            Object.entries(sub.jointClassGroups).forEach(([gStr, groups]) => {
+                const targetGrade = gStr; // string "1", "2", "3"
+                jointGroupsLookup[sub.id][targetGrade] = {};
                 groups.forEach(group => group.forEach(cid => {
-                    jointGroupsLookup[sub.id][g][cid] = group.filter(v => v !== cid);
+                    jointGroupsLookup[sub.id][targetGrade][cid] = group.filter(v => v !== cid);
                 }));
             });
         }
@@ -111,6 +106,7 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         exchangeLookup[sub.id] = {};
         classes.forEach(cls => {
             if (cls.type === "special" && cls.exchangeClassId) {
+                const gradeStr = cls.grade.toString();
                 const subIsEx = (cls.specialType === "intellectual" && sub.intellectualExchange?.[cls.grade]) ||
                     (cls.specialType === "emotional" && sub.emotionalExchange?.[cls.grade]) ||
                     (cls.specialType === "physical" && sub.physicalExchange?.[cls.grade]) ||
@@ -127,8 +123,9 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     });
 
     const getPartners = (subId: string, grade: number, clsId: string) => {
+        const gradeStr = grade.toString();
         return Array.from(new Set([
-            ...(jointGroupsLookup[subId]?.[grade]?.[clsId] || []),
+            ...(jointGroupsLookup[subId]?.[gradeStr]?.[clsId] || []),
             ...(multiGradeLookup[subId]?.[clsId] || []),
             ...(exchangeLookup[subId]?.[clsId] || [])
         ]));
@@ -153,24 +150,21 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         if (!dayConfig) return true;
         for (let p = 1; p <= dayConfig.periods; p++) {
             if (exceptSlot && exceptSlot.period === p) continue;
-            let isWorking = false;
             const t = teachers.find(x => x.id === tId);
-            if (t?.meetingIds?.some(mid => data.meetings.find(m => m.id === mid)?.slots.some(s => s.day === day && s.period === p))) isWorking = true;
-            if (t?.unavailable.some(s => s.day === day && s.period === p)) isWorking = true;
-            if (!isWorking) {
-                let inClass = false;
-                for (const cId of Object.keys(currentSchedule)) {
-                    if (currentSchedule[cId][day]?.[p]?.teacherIds?.includes(tId) || currentSchedule[cId][day]?.[p]?.teacherId === tId) {
-                        inClass = true; break;
-                    }
+            if (t?.meetingIds?.some(mid => data.meetings.find(m => m.id === mid)?.slots.some(s => s.day === day && s.period === p))) continue;
+            if (t?.unavailable.some(s => s.day === day && s.period === p)) continue;
+            let inClass = false;
+            for (const cId of Object.keys(currentSchedule)) {
+                if (currentSchedule[cId][day]?.[p]?.teacherIds?.includes(tId) || currentSchedule[cId][day]?.[p]?.teacherId === tId) {
+                    inClass = true; break;
                 }
-                if (!inClass) return true;
             }
+            if (!inClass) return true;
         }
         return false;
     };
 
-    // --- Phase 1: Fixed Slots ---
+    // 3. 固定配置の処理
     subjects.forEach(sub => {
         if (!sub.fixedSlots) return;
         Object.entries(sub.fixedSlots).forEach(([targetKey, slots]) => {
@@ -195,25 +189,32 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         });
     });
 
-    // --- Phase 2: Priority subjects (Joint/Multi/Exchange) first ---
-    const allSlots = DAY_CONFIGS.flatMap(d => Array.from({ length: d.periods }, (_, i) => ({ day: d.key as Weekday, period: i + 1 })));
-
-    // 配置エンジン
-    const attemptPlacement = (slot: { day: Weekday, period: number }, cls: ClassGroup, filterPartners: boolean) => {
-        if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return false;
-        const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
-        const pool = classNeeds[cls.id].filter(n => n.count > 0 && !subjToday.includes(n.subjectId));
-
-        // パートナー制約の難しさでソート
-        pool.sort((a, b) => {
+    // 4. 教科プールを制約の難易度でソートしておく
+    classes.forEach(cls => {
+        classNeeds[cls.id].sort((a, b) => {
             const pA = getPartners(a.subjectId, cls.grade, cls.id).length;
             const pB = getPartners(b.subjectId, cls.grade, cls.id).length;
-            return pB - pA;
+            if (pA !== pB) return pB - pA; // パートナーが多い（合同など）を優先
+            return b.count - a.count; // 次に残数が多いのを優先
         });
+    });
 
-        for (const candidate of pool) {
+    // 5. メイン配置ループ (3パス制)
+    const allSlots = DAY_CONFIGS.flatMap(d => Array.from({ length: d.periods }, (_, i) => ({ day: d.key as Weekday, period: i + 1 })));
+    const shuffledSlots = [...allSlots].sort(() => Math.random() - 0.5);
+    const shuffledClasses = [...classes].sort(() => Math.random() - 0.5);
+
+    const attemptSlot = (slot: { day: Weekday, period: number }, cls: ClassGroup, mode: 'strict-joint' | 'all') => {
+        if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
+
+        const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
+        const candidates = classNeeds[cls.id].filter(n => n.count > 0 && !subjToday.includes(n.subjectId));
+
+        for (const candidate of candidates) {
             const partners = getPartners(candidate.subjectId, cls.grade, cls.id);
-            if (filterPartners && partners.length === 0) continue; // 第一パスでは連動なしを飛ばす
+
+            // モードに応じたフィルタリング
+            if (mode === 'strict-joint' && partners.length === 0) continue;
 
             const validPartners = partners.filter(pId => {
                 const pNeed = classNeeds[pId]?.find(n => n.subjectId === candidate.subjectId);
@@ -222,6 +223,7 @@ function runSingleGenerationAttempt(data: TimetableData): any {
                 return pNeed && pNeed.count > 0 && isFree && notToday;
             });
 
+            // 連動不全の場合は配置しない
             if (partners.length > 0 && validPartners.length !== partners.length) continue;
 
             const allTeachers = new Set(candidate.teacherIds);
@@ -229,6 +231,7 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             const tToAssign = Array.from(allTeachers);
             if (!checkTeacherFree(tToAssign, slot.day, slot.period, newSchedule)) continue;
 
+            // 準備時間チェック
             let hrViolation = false;
             for (const tId of tToAssign) {
                 const t = teachers.find(x => x.id === tId);
@@ -238,77 +241,65 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             }
             if (hrViolation) continue;
 
+            // 配置！
             [cls.id, ...validPartners].forEach(cId => {
                 if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
                 newSchedule[cId][slot.day][slot.period] = { subjectId: candidate.subjectId, teacherIds: tToAssign, teacherId: tToAssign[0] };
                 const n = classNeeds[cId]?.find(x => x.subjectId === candidate.subjectId);
                 if (n) n.count--;
             });
-            return true;
+            return;
         }
-        return false;
     };
 
-    // ランダム要素を取り入れつつ配置
-    const shuffledSlots = [...allSlots].sort(() => Math.random() - 0.5);
-    const shuffledClasses = [...classes].sort(() => Math.random() - 0.5);
+    // パス1: 連動あり（合同・複式・交流）を最優先で埋める
+    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, 'strict-joint')));
+    // パス2: 残り全てを埋める
+    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, 'all')));
 
-    // パス1: 連動あり優先
-    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptPlacement(s, c, true)));
-    // パス2: 残り全て
-    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptPlacement(s, c, false)));
+    // 6. スワップロジックの強化版 (最後に空席を探して交換)
+    let advancedSwapCount = 0;
+    const MAX_ADVANCED_SWAPS = 20;
 
-    // --- Phase 3: Simple Swapping (埋まらなかったコマのための最後の一押し) ---
-    classes.forEach(cls => {
-        allSlots.forEach(slot => {
-            if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
+    for (const cls of classes) {
+        for (const slot of allSlots) {
+            if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) continue;
+            if (advancedSwapCount >= MAX_ADVANCED_SWAPS) break;
 
             const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
             const needed = classNeeds[cls.id].find(n => n.count > 0 && !subjToday.includes(n.subjectId));
-            if (!needed) return;
+            if (!needed) continue;
 
-            // この教科を入れたいけど、先生がどこかで塞がっている場合
-            const busyTeacherId = needed.teacherIds.find(tId => !checkTeacherFree([tId], slot.day, slot.period, newSchedule));
-            if (!busyTeacherId) return;
+            // 邪魔している先生を特定
+            const blockingInstructors = needed.teacherIds.filter(t => !checkTeacherFree([t], slot.day, slot.period, newSchedule));
+            if (blockingInstructors.length > 0) {
+                for (const tId of blockingInstructors) {
+                    // その先生の別のコマを探す
+                    for (const otherCId of Object.keys(newSchedule)) {
+                        const cell = newSchedule[otherCId][slot.day]?.[slot.period];
+                        if (cell?.teacherIds?.includes(tId) || cell?.teacherId === tId) {
+                            // その他人の授業を動かせる別の空き時間があるか？
+                            const targetSubId = cell.subjectId;
+                            const possibleRescuers = allSlots.filter(s =>
+                                !newSchedule[otherCId][s.day]?.[s.period]?.subjectId &&
+                                !Object.values(newSchedule[otherCId][s.day] || {}).some((c: any) => c.subjectId === targetSubId) &&
+                                checkTeacherFree(cell.teacherIds || [cell.teacherId], s.day, s.period, newSchedule)
+                            );
 
-            // 先生を塞いでいる他のクラスのコマを探す
-            for (const otherCId of Object.keys(newSchedule)) {
-                if (otherCId === cls.id) continue;
-                const otherCell = newSchedule[otherCId][slot.day]?.[slot.period];
-                if (otherCell?.teacherIds?.includes(busyTeacherId) || otherCell?.teacherId === busyTeacherId) {
-                    // その「他人のコマ」を別の空き時間に移動できないか試す
-                    const targetSubId = otherCell.subjectId;
-                    const otherCls = classes.find(c => c.id === otherCId)!;
-
-                    const possibleSlots = allSlots.filter(s =>
-                        !newSchedule[otherCId][s.day]?.[s.period]?.subjectId &&
-                        !Object.values(newSchedule[otherCId][s.day] || {}).some((c: any) => c.subjectId === targetSubId) &&
-                        checkTeacherFree(otherCell.teacherIds || [otherCell.teacherId], s.day, s.period, newSchedule)
-                    );
-
-                    if (possibleSlots.length > 0) {
-                        // スワップ実行！
-                        const moveSlot = possibleSlots[0];
-                        newSchedule[otherCId][moveSlot.day][moveSlot.period] = { ...otherCell };
-                        delete newSchedule[otherCId][slot.day][slot.period];
-
-                        // 今空いた場所に、本来入れたかった教科を入れる（再度チェック）
-                        if (checkTeacherFree(needed.teacherIds, slot.day, slot.period, newSchedule)) {
-                            newSchedule[cls.id][slot.day][slot.period] = {
-                                subjectId: needed.subjectId,
-                                teacherIds: needed.teacherIds,
-                                teacherId: needed.teacherIds[0]
-                            };
-                            needed.count--;
-                            break;
-                        } else {
-                            // 失敗したら戻す（簡易的なので完全に元に戻すのは大変だが、整合性は守る）
+                            if (possibleRescuers.length > 0) {
+                                const move = possibleRescuers[Math.floor(Math.random() * possibleRescuers.length)];
+                                if (!newSchedule[otherCId][move.day]) newSchedule[otherCId][move.day] = {};
+                                newSchedule[otherCId][move.day][move.period] = { ...cell };
+                                delete newSchedule[otherCId][slot.day][slot.period];
+                                advancedSwapCount++;
+                                break;
+                            }
                         }
                     }
                 }
             }
-        });
-    });
+        }
+    }
 
     return newSchedule;
 }
