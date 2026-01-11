@@ -12,8 +12,9 @@ import { TimetableOverview } from "./TimetableOverview";
 import { Sidebar } from "./Sidebar";
 import { LessonPalette } from "./LessonPalette";
 import { MatrixView } from "./MatrixView";
+import { AssignmentAuditView } from "./AssignmentAuditView";
 
-type ViewKey = "matrix" | "settings" | "overview";
+type ViewKey = "matrix" | "settings" | "overview" | "audit";
 
 export function TimetableWorkspace() {
   const {
@@ -235,6 +236,13 @@ export function TimetableWorkspace() {
           <div className="flex-1 overflow-auto bg-slate-50 p-8">
             <h1 className="text-xl font-bold text-slate-800 mb-8">全校時間割 俯瞰表示</h1>
             <TimetableOverview data={data} />
+          </div>
+        );
+      case "audit":
+        return (
+          <div className="flex-1 overflow-auto bg-slate-50 p-8">
+            <h1 className="text-xl font-bold text-slate-800 mb-8">設定進捗・監査レポート</h1>
+            <AssignmentAuditView data={data} />
           </div>
         );
       default:

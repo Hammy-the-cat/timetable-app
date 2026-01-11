@@ -38,9 +38,13 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
                 </div>
 
                 <div className="space-y-1">
-                    <button onClick={() => onViewChange("overview")} className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md text-slate-600 hover:bg-slate-50 transition-colors">
+                    <button onClick={() => onViewChange("overview")} className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${activeView === "overview" ? "bg-brand-50 text-brand-500" : "text-slate-600 hover:bg-slate-50"}`}>
                         <span className="mr-3 text-lg">📈</span>
                         全体俯瞰（統計）
+                    </button>
+                    <button onClick={() => onViewChange("audit")} className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${activeView === "audit" ? "bg-brand-50 text-brand-500" : "text-slate-600 hover:bg-slate-50"}`}>
+                        <span className="mr-3 text-lg">📋</span>
+                        設定進捗レポート
                     </button>
                 </div>
             </nav>
