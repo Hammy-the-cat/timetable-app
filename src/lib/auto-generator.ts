@@ -34,7 +34,6 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
                 const eligible = teachers.filter(t => t.taughtGrades?.includes(cls.grade) || (t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id)));
                 assignedTeacherIds = eligible.map(e => e.id);
             } else if (sub.name === "自立" || sub.name === "生活") {
-                // 特別支援学級向けの自立活動・生活は担任
                 const hr = teachers.find(t => t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id));
                 if (hr) assignedTeacherIds.push(hr.id);
             } else {
@@ -47,7 +46,7 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
         }).filter(n => n.count > 0);
     });
 
-    // --- 前準備: 合同授業のグループ情報を整理 ---
+    // --- 前準備: 各種連動グループ情報を整理 ---
     const jointGroupsLookup: Record<string, Record<number, Record<string, string[]>>> = {};
     subjects.forEach(sub => {
         if (sub.isJointSubject && sub.jointClassGroups) {
@@ -64,7 +63,6 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
         }
     });
 
-    // --- 前準備: 複式授業 (Multi-Grade) のグループ情報を整理 ---
     const multiGradeLookup: Record<string, Record<string, string[]>> = {};
     subjects.forEach(sub => {
         if (sub.isMultiGrade && sub.multiGradeGroups) {
@@ -77,7 +75,6 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
         }
     });
 
-    // --- 前準備: 交流学級 (Exchange Class) のパートナー情報を整理 ---
     const exchangeLookup: Record<string, Record<string, string[]>> = {};
     subjects.forEach(sub => {
         exchangeLookup[sub.id] = {};
@@ -99,6 +96,15 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
             }
         });
     });
+
+    // パートナー取得ユーティリティ
+    const getPartners = (subId: string, grade: number, clsId: string) => {
+        return Array.from(new Set([
+            ...(jointGroupsLookup[subId]?.[grade]?.[clsId] || []),
+            ...(multiGradeLookup[subId]?.[clsId] || []),
+            ...(exchangeLookup[subId]?.[clsId] || [])
+        ]));
+    };
 
     // --- ユーティリティ: 教師の空き確認 ---
     const checkTeacherFree = (tId: string, day: Weekday, period: number, currentSchedule: any): boolean => {
@@ -147,6 +153,7 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
     };
 
     // --- 特殊処理: 固定配置 (Fixed Slots) の処理 ---
+    // 連動（合同・交流・複式）を考慮して配置する
     subjects.forEach(sub => {
         if (!sub.fixedSlots) return;
 
@@ -166,16 +173,38 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
                     if (!need || need.count <= 0) return;
                     if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
 
-                    const allTeachersFree = need.teacherIds.every(tId => checkTeacherFree(tId, slot.day, slot.period, newSchedule));
+                    // パートナーの特定
+                    const partners = getPartners(sub.id, cls.grade, cls.id);
+
+                    // パートナーも含めた全教員の特定
+                    const allTeachers = new Set<string>(need.teacherIds);
+                    partners.forEach(pId => {
+                        const pNeed = classNeeds[pId]?.find(n => n.subjectId === sub.id);
+                        if (pNeed) pNeed.teacherIds.forEach(tid => allTeachers.add(tid));
+                    });
+                    const teacherIdsToAssign = Array.from(allTeachers);
+
+                    // 教員が空いているか (固定配置なので、既に配置済みの自分のパートナーは除外して判定する必要があるが、
+                    // 現状はパートナーも含めて一括配置するので、ここでは単純に checkTeacherFree で良い。
+                    // ただし、パートナーが既に別の理由（他の固定配置など）で埋まっていないか確認が必要)
+                    const isAnyPartnerBusy = partners.some(pId => newSchedule[pId]?.[slot.day]?.[slot.period]?.subjectId);
+                    if (isAnyPartnerBusy) return;
+
+                    const allTeachersFree = teacherIdsToAssign.every(tId => checkTeacherFree(tId, slot.day, slot.period, newSchedule));
                     if (!allTeachersFree) return;
 
-                    if (!newSchedule[cls.id][slot.day]) newSchedule[cls.id][slot.day] = {};
-                    newSchedule[cls.id][slot.day][slot.period] = {
-                        subjectId: sub.id,
-                        teacherIds: need.teacherIds,
-                        teacherId: need.teacherIds[0],
-                    };
-                    need.count--;
+                    // 配置実行（自身とパートナー全員）
+                    const classesToUpdate = [cls.id, ...partners];
+                    classesToUpdate.forEach(cId => {
+                        if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
+                        newSchedule[cId][slot.day][slot.period] = {
+                            subjectId: sub.id,
+                            teacherIds: teacherIdsToAssign,
+                            teacherId: teacherIdsToAssign[0],
+                        };
+                        const cNeed = classNeeds[cId]?.find(n => n.subjectId === sub.id);
+                        if (cNeed) cNeed.count--;
+                    });
                 });
             });
         });
@@ -202,14 +231,8 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
             pool.sort(() => Math.random() - 0.5);
 
             for (const candidate of pool) {
-                // パートナー特定
-                const partners = Array.from(new Set([
-                    ...(jointGroupsLookup[candidate.subjectId]?.[cls.grade]?.[cls.id] || []),
-                    ...(multiGradeLookup[candidate.subjectId]?.[cls.id] || []),
-                    ...(exchangeLookup[candidate.subjectId]?.[cls.id] || [])
-                ]));
+                const partners = getPartners(candidate.subjectId, cls.grade, cls.id);
 
-                // CHECK: パートナーもこの教科を必要としており、かつ空いているか
                 const validPartners = partners.filter(pId => {
                     const pNeed = classNeeds[pId]?.find(n => n.subjectId === candidate.subjectId);
                     const isFree = !newSchedule[pId]?.[slot.day]?.[slot.period]?.subjectId;
@@ -217,10 +240,8 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
                     return pNeed && pNeed.count > 0 && isFree && notToday;
                 });
 
-                // 契約上全員参加が必要な場合（合同・複式・交流）に誰か欠けていたらスキップ
                 if (partners.length > 0 && validPartners.length !== partners.length) continue;
 
-                // 教員の算出
                 const allPlannedTeachers = new Set<string>(candidate.teacherIds);
                 validPartners.forEach(pId => {
                     const pNeed = classNeeds[pId]?.find(n => n.subjectId === candidate.subjectId);
@@ -231,7 +252,6 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
                 const allTeachersFree = teacherIdsToAssign.every(tId => checkTeacherFree(tId, slot.day, slot.period, newSchedule));
                 if (!allTeachersFree) continue;
 
-                // 担任の準備時間
                 let hrViolation = false;
                 for (const tId of teacherIdsToAssign) {
                     const t = teachers.find(x => x.id === tId);
@@ -247,7 +267,6 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
                 }
                 if (hrViolation) continue;
 
-                // 配置
                 const classesToUpdate = [cls.id, ...validPartners];
                 classesToUpdate.forEach(cId => {
                     if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
