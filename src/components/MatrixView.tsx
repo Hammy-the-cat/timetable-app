@@ -45,27 +45,38 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
         };
 
         return [...data.teachers].sort((a, b) => {
-            // Grade derivation
-            const getOrderGrade = (t: Teacher) => {
+            // 1. 所属学年 (taughtGrades) または 担任学級 から最優先の学年を判定
+            const getPrimaryGrade = (t: Teacher) => {
+                // 「所属学年(総合向け)」設定を最優先
+                if (t.taughtGrades && t.taughtGrades.length > 0) {
+                    return Math.min(...t.taughtGrades);
+                }
+                // 設定がない場合は担任学級から判定
                 if (t.homeroomClassIds && t.homeroomClassIds.length > 0) {
                     const cls = data.classes.find(c => c.id === t.homeroomClassIds![0]);
                     if (cls) return cls.grade;
                 }
-                if (t.taughtGrades && t.taughtGrades.length > 0) {
-                    return Math.min(...t.taughtGrades);
-                }
-                return 999; // Non-affiliated
+                return 999; // 学年所属なし (専科など)
             };
 
-            const gradeA = getOrderGrade(a);
-            const gradeB = getOrderGrade(b);
-
+            const gradeA = getPrimaryGrade(a);
+            const gradeB = getPrimaryGrade(b);
             if (gradeA !== gradeB) return gradeA - gradeB;
 
-            // Subject sorting
+            // 2. 同一学年内では「担任」を「副担（助手）」より先に
+            if (a.role !== b.role) {
+                return a.role === "homeroom" ? -1 : 1;
+            }
+
+            // 3. 教科順 (国語 -> 社会 ... )
             const subA = a.subjects[0] || "";
             const subB = b.subjects[0] || "";
-            return getSubjectScore(subA) - getSubjectScore(subB);
+            const scoreA = getSubjectScore(subA);
+            const scoreB = getSubjectScore(subB);
+            if (scoreA !== scoreB) return scoreA - scoreB;
+
+            // 4. 名前順
+            return a.name.localeCompare(b.name, "ja");
         });
     }, [data.teachers, data.classes]);
 
