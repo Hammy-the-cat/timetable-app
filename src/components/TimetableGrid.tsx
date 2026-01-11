@@ -99,6 +99,20 @@ export function TimetableGrid({
                             <span className="opacity-50">📍</span> {room.name}
                           </div>
                         )}
+                        {teacher && (
+                          (() => {
+                            const meeting = data.meetings.find(m =>
+                              teacher.meetingIds?.includes(m.id) &&
+                              m.slots.some(s => s.day === day.key && s.period === period)
+                            );
+                            return meeting ? (
+                              <div className="mt-1 text-[9px] font-black text-amber-600 bg-amber-50 px-1 py-0.5 rounded border border-amber-100 flex items-center gap-1">
+                                <span className="w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+                                {meeting.name}
+                              </div>
+                            ) : null;
+                          })()
+                        )}
                       </div>
                       <div className="absolute left-0 top-0 bottom-0 w-1 bg-brand-500 opacity-80" />
                     </div>

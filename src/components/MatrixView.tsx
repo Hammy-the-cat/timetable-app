@@ -114,15 +114,23 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                                     className={`border border-slate-200 p-1 text-center cursor-pointer transition-all h-14 min-w-[3.5rem] relative ${isSelected ? "bg-brand-50 ring-4 ring-inset ring-brand-500 z-10" : "hover:bg-brand-50"
                                                         } ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''} ${meetingName ? 'bg-amber-50/20' : ''}`}
                                                 >
-                                                    {meetingName ? (
-                                                        <span className="text-[9px] font-bold text-amber-600 opacity-60">
-                                                            {meetingName}
-                                                        </span>
-                                                    ) : (
+                                                    <div className="flex flex-col items-center justify-center gap-0.5">
                                                         <span className="font-bold text-slate-900 line-clamp-2 leading-tight">
                                                             {subjectName}
                                                         </span>
-                                                    )}
+                                                        {cell?.teacherId && (() => {
+                                                            const teacher = data.teachers.find(t => t.id === cell.teacherId);
+                                                            const meeting = data.meetings.find(m =>
+                                                                teacher?.meetingIds?.includes(m.id) &&
+                                                                m.slots.some(s => s.day === slot.day && s.period === slot.period)
+                                                            );
+                                                            return meeting ? (
+                                                                <span className="text-[7px] font-black text-amber-600 bg-amber-50 px-1 rounded border border-amber-100 uppercase tracking-tighter">
+                                                                    {meeting.name}
+                                                                </span>
+                                                            ) : null;
+                                                        })()}
+                                                    </div>
                                                 </td>
                                             );
                                         })}
