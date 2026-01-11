@@ -2,15 +2,14 @@ import { TimetableData, Weekday, ScheduleCell, Teacher, Subject, ClassGroup, Wee
 import { DAY_CONFIGS, getEffectiveQuota } from "./school";
 
 /**
- * タイムテーブル自動生成エンジン (Elite Multi-Pass Optimizer)
- * 100回の試行を行い、最も高い充填率と制約遵守率を持つスケジュールを選択します。
+ * タイムテーブル自動生成エンジン (Elite Multi-Pass Optimizer v2)
+ * 制約：体育は学校全体で1コマに1グループ（単独または合同）のみ。
  */
 export function generateAutoTimetable(data: TimetableData): TimetableData {
-    const MAX_ATTEMPTS = 100; // ユーザーの要望に応え、試行回数を大幅に増加
+    const MAX_ATTEMPTS = 100;
     let bestSchedule: any = null;
     let bestScore = -1;
 
-    // 合計で埋めるべき全コマ数を計算
     const targetTotalSlots = data.classes.length * DAY_CONFIGS.reduce((sum, d) => sum + d.periods, 0);
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -21,8 +20,6 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
             bestScore = score;
             bestSchedule = result;
         }
-
-        // 完璧に埋まったら即座に終了
         if (score >= targetTotalSlots) break;
     }
 
@@ -49,8 +46,8 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     const { classes, teachers, subjects, schedule } = data;
     const newSchedule = JSON.parse(JSON.stringify(schedule));
 
-    // 1. 各クラスの必要時数を算出
-    const classNeeds: Record<string, { subjectId: string; count: number; teacherIds: string[]; isJoint: boolean }[]> = {};
+    // 必要時数の算出
+    const classNeeds: Record<string, { subjectId: string; count: number; teacherIds: string[]; isJoint: boolean; name: string }[]> = {};
     classes.forEach(cls => {
         classNeeds[cls.id] = subjects.map(sub => {
             const quota = getEffectiveQuota(sub, cls.grade, cls.type || "normal", cls.specialType);
@@ -77,11 +74,11 @@ function runSingleGenerationAttempt(data: TimetableData): any {
                     .filter(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id)))
                     .map(t => t.id);
             }
-            return { subjectId: sub.id, count: remaining, teacherIds: assignedTeacherIds, isJoint: !!sub.isJointSubject };
+            return { subjectId: sub.id, name: sub.name, count: remaining, teacherIds: assignedTeacherIds, isJoint: !!sub.isJointSubject };
         }).filter(n => n.count > 0);
     });
 
-    // 2. 連動グループ情報の整理 (型不一致を修正: grade を string として扱う)
+    // 連動情報の整理
     const jointGroupsLookup: any = {};
     const multiGradeLookup: any = {};
     const exchangeLookup: any = {};
@@ -90,10 +87,9 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         if (sub.isJointSubject && sub.jointClassGroups) {
             jointGroupsLookup[sub.id] = {};
             Object.entries(sub.jointClassGroups).forEach(([gStr, groups]) => {
-                const targetGrade = gStr; // string "1", "2", "3"
-                jointGroupsLookup[sub.id][targetGrade] = {};
+                jointGroupsLookup[sub.id][gStr] = {};
                 groups.forEach(group => group.forEach(cid => {
-                    jointGroupsLookup[sub.id][targetGrade][cid] = group.filter(v => v !== cid);
+                    jointGroupsLookup[sub.id][gStr][cid] = group.filter(v => v !== cid);
                 }));
             });
         }
@@ -106,7 +102,6 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         exchangeLookup[sub.id] = {};
         classes.forEach(cls => {
             if (cls.type === "special" && cls.exchangeClassId) {
-                const gradeStr = cls.grade.toString();
                 const subIsEx = (cls.specialType === "intellectual" && sub.intellectualExchange?.[cls.grade]) ||
                     (cls.specialType === "emotional" && sub.emotionalExchange?.[cls.grade]) ||
                     (cls.specialType === "physical" && sub.physicalExchange?.[cls.grade]) ||
@@ -129,6 +124,17 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             ...(multiGradeLookup[subId]?.[clsId] || []),
             ...(exchangeLookup[subId]?.[clsId] || [])
         ]));
+    };
+
+    // ヘルパー：学校全体の特定スロットでの特定教科（体育など）の使用をチェック
+    const isSubjectInSlotSchoolWide = (subName: string, day: Weekday, period: number, currentSchedule: any): boolean => {
+        for (const cid of Object.keys(currentSchedule)) {
+            const cell = currentSchedule[cid][day]?.[period];
+            if (!cell?.subjectId) continue;
+            const sub = subjects.find(s => s.id === cell.subjectId);
+            if (sub?.name === subName) return true;
+        }
+        return false;
     };
 
     const checkTeacherFree = (tIds: string[], day: Weekday, period: number, currentSchedule: any): boolean => {
@@ -164,7 +170,7 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         return false;
     };
 
-    // 3. 固定配置の処理
+    // 1. 固定配置 (Fixed Slots)
     subjects.forEach(sub => {
         if (!sub.fixedSlots) return;
         Object.entries(sub.fixedSlots).forEach(([targetKey, slots]) => {
@@ -173,11 +179,18 @@ function runSingleGenerationAttempt(data: TimetableData): any {
                 targetClasses.forEach(cls => {
                     const need = classNeeds[cls.id]?.find(n => n.subjectId === sub.id);
                     if (!need || need.count <= 0 || newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
+
+                    // 体育の重複チェック（固定でもチェックするが、固定の自身を誤判定しないように注意。
+                    // ここでは単独の配置を進めるループなので、現在の slot に体育があればスキップ）
+                    if (sub.name === "体育" && isSubjectInSlotSchoolWide("体育", slot.day, slot.period, newSchedule)) return;
+
                     const partners = getPartners(sub.id, cls.grade, cls.id);
                     const allTeachers = new Set(need.teacherIds);
                     partners.forEach(pId => classNeeds[pId]?.find(n => n.subjectId === sub.id)?.teacherIds.forEach(t => allTeachers.add(t)));
                     const tToAssign = Array.from(allTeachers);
+
                     if (partners.some(p => newSchedule[p]?.[slot.day]?.[slot.period]?.subjectId) || !checkTeacherFree(tToAssign, slot.day, slot.period, newSchedule)) return;
+
                     [cls.id, ...partners].forEach(cId => {
                         if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
                         newSchedule[cId][slot.day][slot.period] = { subjectId: sub.id, teacherIds: tToAssign, teacherId: tToAssign[0] };
@@ -189,17 +202,17 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         });
     });
 
-    // 4. 教科プールを制約の難易度でソートしておく
+    // 2. 教科プールのソート
     classes.forEach(cls => {
         classNeeds[cls.id].sort((a, b) => {
             const pA = getPartners(a.subjectId, cls.grade, cls.id).length;
             const pB = getPartners(b.subjectId, cls.grade, cls.id).length;
-            if (pA !== pB) return pB - pA; // パートナーが多い（合同など）を優先
-            return b.count - a.count; // 次に残数が多いのを優先
+            if (pA !== pB) return pB - pA;
+            return b.count - a.count;
         });
     });
 
-    // 5. メイン配置ループ (3パス制)
+    // 3. メイン配置ループ
     const allSlots = DAY_CONFIGS.flatMap(d => Array.from({ length: d.periods }, (_, i) => ({ day: d.key as Weekday, period: i + 1 })));
     const shuffledSlots = [...allSlots].sort(() => Math.random() - 0.5);
     const shuffledClasses = [...classes].sort(() => Math.random() - 0.5);
@@ -212,9 +225,10 @@ function runSingleGenerationAttempt(data: TimetableData): any {
 
         for (const candidate of candidates) {
             const partners = getPartners(candidate.subjectId, cls.grade, cls.id);
-
-            // モードに応じたフィルタリング
             if (mode === 'strict-joint' && partners.length === 0) continue;
+
+            // --- ルール：体育は学校全体で1コマに1グループ ---
+            if (candidate.name === "体育" && isSubjectInSlotSchoolWide("体育", slot.day, slot.period, newSchedule)) continue;
 
             const validPartners = partners.filter(pId => {
                 const pNeed = classNeeds[pId]?.find(n => n.subjectId === candidate.subjectId);
@@ -223,7 +237,6 @@ function runSingleGenerationAttempt(data: TimetableData): any {
                 return pNeed && pNeed.count > 0 && isFree && notToday;
             });
 
-            // 連動不全の場合は配置しない
             if (partners.length > 0 && validPartners.length !== partners.length) continue;
 
             const allTeachers = new Set(candidate.teacherIds);
@@ -231,7 +244,6 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             const tToAssign = Array.from(allTeachers);
             if (!checkTeacherFree(tToAssign, slot.day, slot.period, newSchedule)) continue;
 
-            // 準備時間チェック
             let hrViolation = false;
             for (const tId of tToAssign) {
                 const t = teachers.find(x => x.id === tId);
@@ -241,7 +253,6 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             }
             if (hrViolation) continue;
 
-            // 配置！
             [cls.id, ...validPartners].forEach(cId => {
                 if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
                 newSchedule[cId][slot.day][slot.period] = { subjectId: candidate.subjectId, teacherIds: tToAssign, teacherId: tToAssign[0] };
@@ -252,15 +263,12 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         }
     };
 
-    // パス1: 連動あり（合同・複式・交流）を最優先で埋める
     shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, 'strict-joint')));
-    // パス2: 残り全てを埋める
     shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, 'all')));
 
-    // 6. スワップロジックの強化版 (最後に空席を探して交換)
+    // 4. 高度なスワップ（入れ替え）
     let advancedSwapCount = 0;
-    const MAX_ADVANCED_SWAPS = 20;
-
+    const MAX_ADVANCED_SWAPS = 30;
     for (const cls of classes) {
         for (const slot of allSlots) {
             if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) continue;
@@ -270,30 +278,22 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             const needed = classNeeds[cls.id].find(n => n.count > 0 && !subjToday.includes(n.subjectId));
             if (!needed) continue;
 
-            // 邪魔している先生を特定
-            const blockingInstructors = needed.teacherIds.filter(t => !checkTeacherFree([t], slot.day, slot.period, newSchedule));
-            if (blockingInstructors.length > 0) {
-                for (const tId of blockingInstructors) {
-                    // その先生の別のコマを探す
-                    for (const otherCId of Object.keys(newSchedule)) {
-                        const cell = newSchedule[otherCId][slot.day]?.[slot.period];
-                        if (cell?.teacherIds?.includes(tId) || cell?.teacherId === tId) {
-                            // その他人の授業を動かせる別の空き時間があるか？
-                            const targetSubId = cell.subjectId;
-                            const possibleRescuers = allSlots.filter(s =>
-                                !newSchedule[otherCId][s.day]?.[s.period]?.subjectId &&
-                                !Object.values(newSchedule[otherCId][s.day] || {}).some((c: any) => c.subjectId === targetSubId) &&
-                                checkTeacherFree(cell.teacherIds || [cell.teacherId], s.day, s.period, newSchedule)
-                            );
-
-                            if (possibleRescuers.length > 0) {
-                                const move = possibleRescuers[Math.floor(Math.random() * possibleRescuers.length)];
-                                if (!newSchedule[otherCId][move.day]) newSchedule[otherCId][move.day] = {};
-                                newSchedule[otherCId][move.day][move.period] = { ...cell };
-                                delete newSchedule[otherCId][slot.day][slot.period];
-                                advancedSwapCount++;
-                                break;
-                            }
+            // 体育制限のために邪魔されているか
+            if (needed.name === "体育" && isSubjectInSlotSchoolWide("体育", slot.day, slot.period, newSchedule)) {
+                // その時間に体育をしている他クラスを移動させる
+                for (const oCid of Object.keys(newSchedule)) {
+                    const oCell = newSchedule[oCid][slot.day]?.[slot.period];
+                    if (!oCell?.subjectId) continue;
+                    const oSub = subjects.find(s => s.id === oCell.subjectId);
+                    if (oSub?.name === "体育") {
+                        const moveSlots = allSlots.filter(s => !newSchedule[oCid][s.day]?.[s.period]?.subjectId && !Object.values(newSchedule[oCid][s.day] || {}).some((cx: any) => cx.subjectId === oCell.subjectId));
+                        if (moveSlots.length > 0) {
+                            const mv = moveSlots[0];
+                            if (!newSchedule[oCid][mv.day]) newSchedule[oCid][mv.day] = {};
+                            newSchedule[oCid][mv.day][mv.period] = { ...oCell };
+                            delete newSchedule[oCid][slot.day][slot.period];
+                            advancedSwapCount++;
+                            break;
                         }
                     }
                 }
