@@ -383,6 +383,16 @@ export function SettingsPanel({
                   let subjects = teacherSubjects.split(",").map(s => s.trim()).filter(Boolean);
                   if (teacherRole === "homeroom") {
                     const autoSubjects = ["道徳", "学活"];
+
+                    // 特別支援学級の担任なら「自立」「生活」を追加
+                    const isSpecialHomeroom = teacherHomeroomClassIds.some(id => {
+                      const cls = classes.find(c => c.id === id);
+                      return cls?.type === "special";
+                    });
+                    if (isSpecialHomeroom) {
+                      autoSubjects.push("自立", "生活");
+                    }
+
                     autoSubjects.forEach(s => { if (!subjects.includes(s)) subjects.push(s); });
                   }
                   if (teacherGrades.length > 0 || teacherRole === "homeroom") {
@@ -594,13 +604,21 @@ export function SettingsPanel({
                               ) : ""}
                               onChange={(e) => {
                                 const val = e.target.value;
+                                let nextIds: string[] = [];
                                 if (val.startsWith("special-")) {
                                   const label = val.replace("special-", "");
-                                  const ids = classes.filter(c => c.type === "special" && c.label === label).map(c => c.id);
-                                  onUpdateTeacher(t.id, { homeroomClassIds: ids });
+                                  nextIds = classes.filter(c => c.type === "special" && c.label === label).map(c => c.id);
                                 } else {
-                                  onUpdateTeacher(t.id, { homeroomClassIds: val ? [val] : [] });
+                                  nextIds = val ? [val] : [];
                                 }
+
+                                let subjects = [...t.subjects];
+                                const isSpecial = nextIds.some(id => classes.find(c => c.id === id)?.type === "special");
+                                if (isSpecial) {
+                                  ["自立", "生活"].forEach(s => { if (!subjects.includes(s)) subjects.push(s); });
+                                }
+
+                                onUpdateTeacher(t.id, { homeroomClassIds: nextIds, subjects });
                               }}
                             >
                               <option value="">担任学級を選択</option>
