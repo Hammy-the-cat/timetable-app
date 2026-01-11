@@ -50,7 +50,17 @@ export function CellEditor({
       return t.role === "homeroom" && !!t.homeroomClassIds?.includes(classId);
     }
 
-    // B. 総合: 所属学年で判定
+    // B. 個別教科担当設定がある場合 (最優先)
+    if (t.subjectAssignments && t.subjectAssignments.length > 0 && selectedSubject) {
+      const assignment = t.subjectAssignments.find(a => a.subjectName === selectedSubject.name);
+      if (assignment) {
+        // この教科に関しては担当クラスが明示されているので、それに従う
+        if (!assignment.classIds.includes(classId)) return false;
+        // 担当クラスに入っていれば、以下の汎用フィルターはスキップしてOK
+      }
+    }
+
+    // C. 総合: 所属学年で判定
     if (subName === "総合") {
       const cls = data.classes.find(c => c.id === classId);
       const grade = cls?.grade || currentGrade;

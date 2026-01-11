@@ -32,12 +32,18 @@ export interface Subject {
   notes?: string;
 }
 
+export interface SubjectAssignment {
+  subjectName: string;
+  classIds: string[];
+}
+
 export interface Teacher {
   id: string;
   name: string;
   subjects: string[];
   taughtGrades?: number[];
   assignedClassIds?: string[];
+  subjectAssignments?: SubjectAssignment[]; // 教科ごとの担当クラス
   role?: "homeroom" | "assistant";
   homeroomClassIds?: string[];
   unavailable: WeeklySlot[];

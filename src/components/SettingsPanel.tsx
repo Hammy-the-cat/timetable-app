@@ -8,6 +8,7 @@ import {
   Classroom,
   Meeting,
   Subject,
+  SubjectAssignment,
   Teacher,
   WeeklySlot,
 } from "@/lib/types";
@@ -163,6 +164,7 @@ export function SettingsPanel({
   const [teacherRole, setTeacherRole] = useState<"homeroom" | "assistant">("assistant");
   const [teacherHomeroomClassIds, setTeacherHomeroomClassIds] = useState<string[]>([]);
   const [teacherMeetings, setTeacherMeetings] = useState<string[]>([]);
+  const [teacherSubjectAssignments, setTeacherSubjectAssignments] = useState<SubjectAssignment[]>([]);
 
   const [roomName, setRoomName] = useState("");
   const [roomType, setRoomType] = useState<"standard" | "special">("standard");
@@ -183,6 +185,25 @@ export function SettingsPanel({
     setTeacherClasses(prev =>
       prev.includes(classId) ? prev.filter(id => id !== classId) : [...prev, classId]
     );
+  };
+
+  const toggleAssignmentClass = (subjectName: string, classId: string, assignments: SubjectAssignment[], setter: (val: SubjectAssignment[]) => void) => {
+    const existing = assignments.find(a => a.subjectName === subjectName);
+    if (existing) {
+      if (existing.classIds.includes(classId)) {
+        setter(assignments.map(a => a.subjectName === subjectName
+          ? { ...a, classIds: a.classIds.filter(id => id !== classId) }
+          : a
+        ));
+      } else {
+        setter(assignments.map(a => a.subjectName === subjectName
+          ? { ...a, classIds: [...a.classIds, classId] }
+          : a
+        ));
+      }
+    } else {
+      setter([...assignments, { subjectName, classIds: [classId] }]);
+    }
   };
 
   const want = (key: SectionKey) => !sections || sections.includes(key);
@@ -389,6 +410,43 @@ export function SettingsPanel({
                   </div>
                 </div>
 
+                {teacherSubjects.length > 0 && (
+                  <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">教科ごとの担当学級設定</label>
+                    <div className="space-y-2">
+                      {teacherSubjects.map(subName => (
+                        <div key={subName} className="p-2 border border-brand-100 rounded-lg bg-brand-50/30 space-y-1.5 shadow-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black text-brand-600 flex items-center gap-1">
+                              <span className="w-1 h-3 bg-brand-500 rounded-full" />
+                              {subName} の担当クラス
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-4 gap-1">
+                            {classes.map(c => {
+                              const isAssigned = teacherSubjectAssignments.find(a => a.subjectName === subName)?.classIds.includes(c.id);
+                              return (
+                                <label key={c.id} className={`flex items-center justify-center p-1 rounded border text-[8px] font-bold cursor-pointer transition-all ${isAssigned
+                                  ? 'bg-brand-500 border-brand-600 text-white shadow-sm'
+                                  : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'
+                                  }`}>
+                                  <input
+                                    type="checkbox"
+                                    className="hidden"
+                                    checked={isAssigned || false}
+                                    onChange={() => toggleAssignmentClass(subName, c.id, teacherSubjectAssignments, setTeacherSubjectAssignments)}
+                                  />
+                                  {c.grade}-{c.label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">授業不可コマ</label>
                   <SlotPicker slot={teacherSlot} onChange={setTeacherSlot} />
@@ -418,10 +476,26 @@ export function SettingsPanel({
                       autoSubjects.push("自立", "生活");
                     }
 
-                    autoSubjects.forEach(s => { if (!subjects.includes(s)) subjects.push(s); });
+                    autoSubjects.forEach(s => {
+                      if (!subjects.includes(s)) subjects.push(s);
+                      // 担任学級を自動割り当て
+                      if (!teacherSubjectAssignments.some(a => a.subjectName === s)) {
+                        teacherSubjectAssignments.push({ subjectName: s, classIds: teacherHomeroomClassIds });
+                      }
+                    });
                   }
                   if (teacherGrades.length > 0 || teacherRole === "homeroom") {
                     if (!subjects.includes("総合")) subjects.push("総合");
+                    if (!teacherSubjectAssignments.some(a => a.subjectName === "総合")) {
+                      // 総合は担当学年全てのクラス、または担任クラス
+                      const targetIds = teacherRole === "homeroom" ? [...teacherHomeroomClassIds] : [];
+                      teacherGrades.forEach(g => {
+                        classes.filter(c => c.grade === g).forEach(c => {
+                          if (!targetIds.includes(c.id)) targetIds.push(c.id);
+                        });
+                      });
+                      teacherSubjectAssignments.push({ subjectName: "総合", classIds: targetIds });
+                    }
                   }
                   onAddTeacher({
                     name: teacherName.trim(),
@@ -431,11 +505,12 @@ export function SettingsPanel({
                     role: teacherRole,
                     homeroomClassIds: teacherRole === "homeroom" ? teacherHomeroomClassIds : [],
                     unavailable: teacherBlocks,
-                    meetingIds: teacherMeetings
+                    meetingIds: teacherMeetings,
+                    subjectAssignments: teacherSubjectAssignments
                   });
                   setTeacherName(""); setTeacherSubjects([]); setTeacherClasses([]); setTeacherBlocks([]);
                   setTeacherRole("assistant"); setTeacherHomeroomClassIds([]); setTeacherGrades([]);
-                  setTeacherMeetings([]);
+                  setTeacherMeetings([]); setTeacherSubjectAssignments([]);
                 }}
                 className="w-full py-2 bg-brand-500 text-white rounded-md text-sm font-bold shadow-sm hover:bg-brand-600 transition-colors"
               >
@@ -546,6 +621,44 @@ export function SettingsPanel({
                           ))}
                         </div>
                       </div>
+
+                      {t.subjects.length > 0 && (
+                        <div className="space-y-1.5 p-2 bg-indigo-50/30 rounded border border-indigo-100 animate-in fade-in slide-in-from-top-1">
+                          <label className="text-[8px] font-black text-indigo-500 uppercase flex items-center gap-1">
+                            <span className="w-1 h-2 bg-indigo-500 rounded-full" />
+                            教科ごとの担当クラス
+                          </label>
+                          <div className="space-y-1.5">
+                            {t.subjects.map((subName: string) => (
+                              <div key={subName} className="p-1.5 bg-white rounded border border-indigo-100 space-y-1 shadow-sm">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[9px] font-black text-slate-700">{subName}</span>
+                                </div>
+                                <div className="grid grid-cols-4 gap-0.5">
+                                  {classes.map(c => {
+                                    const assignments = t.subjectAssignments || [];
+                                    const isAssigned = assignments.find((a: SubjectAssignment) => a.subjectName === subName)?.classIds.includes(c.id);
+                                    return (
+                                      <label key={c.id} className={`flex items-center justify-center p-1 rounded border text-[7px] font-bold cursor-pointer transition-all ${isAssigned
+                                        ? 'bg-indigo-500 border-indigo-600 text-white shadow-sm'
+                                        : 'bg-white border-slate-100 text-slate-400 hover:bg-slate-50'
+                                        }`}>
+                                        <input
+                                          type="checkbox"
+                                          className="hidden"
+                                          checked={isAssigned || false}
+                                          onChange={() => toggleAssignmentClass(subName, c.id, assignments, (val) => onUpdateTeacher(t.id, { subjectAssignments: val }))}
+                                        />
+                                        {c.grade}-{c.label}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <div className="space-y-1">
                         <label className="text-[10px] font-extrabold text-slate-400 uppercase">担当設定の変更</label>
                         <div className="flex gap-1 mb-2">
@@ -773,7 +886,23 @@ export function SettingsPanel({
                             )}
                           </div>
                         </div>
-                        <span className="text-[11px] text-slate-500 font-medium">{t.subjects.join(", ") || "担当未設定"}</span>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {t.subjectAssignments && t.subjectAssignments.length > 0 ? (
+                            t.subjectAssignments.map((a: SubjectAssignment) => (
+                              <div key={a.subjectName} className="flex items-center bg-indigo-50 border border-indigo-100 rounded overflow-hidden shadow-sm">
+                                <span className="text-[9px] font-black bg-indigo-500 text-white px-1.5 py-0.5">{a.subjectName}</span>
+                                <span className="text-[9px] font-bold text-indigo-700 px-1.5 py-0.5">
+                                  {a.classIds.map(cid => {
+                                    const cls = classes.find(c => c.id === cid);
+                                    return cls ? `${cls.grade}-${cls.label}` : cid;
+                                  }).join(", ")}
+                                </span>
+                              </div>
+                            ))
+                          ) : (
+                            <span className="text-[11px] text-slate-500 font-medium">{t.subjects.join(", ") || "担当未設定"}</span>
+                          )}
+                        </div>
 
                         {(t.meetingIds?.length ?? 0) > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
