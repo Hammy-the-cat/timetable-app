@@ -38,6 +38,19 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
 
     const SUBJECT_ORDER = ["国語", "社会", "数学", "理科", "英語", "体育", "音楽", "美術", "技術", "家庭"];
 
+    const getPrimaryGrade = (t: Teacher) => {
+        // 1. 担任学級を最優先
+        if (t.homeroomClassIds && t.homeroomClassIds.length > 0) {
+            const cls = data.classes.find(c => c.id === t.homeroomClassIds![0]);
+            if (cls) return cls.grade;
+        }
+        // 2. 所属（総合向け）を次点
+        if (t.taughtGrades && t.taughtGrades.length > 0) {
+            return Math.max(...t.taughtGrades);
+        }
+        return 999;
+    };
+
     const sortedTeachers = useMemo(() => {
         const getSubjectScore = (s: string) => {
             const idx = SUBJECT_ORDER.indexOf(s);
@@ -45,36 +58,16 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
         };
 
         return [...data.teachers].sort((a, b) => {
-            const getPrimaryGrade = (t: Teacher) => {
-                // 「所属学年(総合向け)」設定を尊重（複数ある場合は最高学年をメインとみなす）
-                if (t.taughtGrades && t.taughtGrades.length > 0) {
-                    return Math.max(...t.taughtGrades);
-                }
-                // 設定がない場合は担任学級から判定
-                if (t.homeroomClassIds && t.homeroomClassIds.length > 0) {
-                    const cls = data.classes.find(c => c.id === t.homeroomClassIds![0]);
-                    if (cls) return cls.grade;
-                }
-                return 999; // 学年所属なし (専科など)
-            };
-
             const gradeA = getPrimaryGrade(a);
             const gradeB = getPrimaryGrade(b);
             if (gradeA !== gradeB) return gradeA - gradeB;
 
-            // 2. 同一学年内では「担任」を「副担（助手）」より先に
-            if (a.role !== b.role) {
-                return a.role === "homeroom" ? -1 : 1;
-            }
+            if (a.role !== b.role) return a.role === "homeroom" ? -1 : 1;
 
-            // 3. 教科順 (国語 -> 社会 ... )
-            const subA = a.subjects[0] || "";
-            const subB = b.subjects[0] || "";
-            const scoreA = getSubjectScore(subA);
-            const scoreB = getSubjectScore(subB);
+            const scoreA = getSubjectScore(a.subjects[0] || "");
+            const scoreB = getSubjectScore(b.subjects[0] || "");
             if (scoreA !== scoreB) return scoreA - scoreB;
 
-            // 4. 名前順
             return a.name.localeCompare(b.name, "ja");
         });
     }, [data.teachers, data.classes]);
@@ -224,46 +217,70 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                 </tr>
                             </thead>
                             <tbody>
-                                {sortedTeachers.map((teacher) => (
-                                    <tr key={teacher.id} className="hover:bg-indigo-50/30 transition-colors group">
-                                        <td className="border border-slate-200 p-3 font-black text-slate-700 sticky left-0 z-10 bg-white group-hover:bg-slate-50 whitespace-nowrap border-r-2 border-r-slate-300">
-                                            {getTeacherLabel(teacher)}
-                                        </td>
-                                        {allSlots.map((slot, i) => {
-                                            const assignedClassLabels: string[] = [];
-                                            for (const classId of Object.keys(data.schedule)) {
-                                                const cell = data.schedule[classId]?.[slot.day]?.[slot.period];
-                                                if (cell?.teacherId === teacher.id || cell?.teacherIds?.includes(teacher.id)) {
-                                                    const cls = data.classes.find(c => c.id === classId);
-                                                    if (cls) assignedClassLabels.push(getClassLabel(cls));
-                                                }
-                                            }
-                                            const assignedClassLabel = assignedClassLabels.join(", ");
-                                            const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== slot.day;
-                                            const isUnavailable = teacher.unavailable.some(us => us.day === slot.day && us.period === slot.period);
-                                            const isParticipatingMeeting = teacher.meetingIds?.some(mid =>
-                                                data.meetings.find(m => m.id === mid && m.slots.some(s => s.day === slot.day && s.period === slot.period))
-                                            );
+                                {(() => {
+                                    let lastGrade = -1;
+                                    return sortedTeachers.map((teacher) => {
+                                        const currentGrade = getPrimaryGrade(teacher);
+                                        const showHeader = currentGrade !== lastGrade;
+                                        lastGrade = currentGrade;
 
-                                            return (
-                                                <td
-                                                    key={i}
-                                                    className={`border border-slate-200 p-1 text-center h-14 min-w-[3.5rem] ${isUnavailable ? "bg-slate-100/50 slanted-stripes" : ""} ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''} ${isParticipatingMeeting ? 'bg-amber-50/20' : ''}`}
-                                                >
-                                                    {isParticipatingMeeting ? (
-                                                        <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1 rounded border border-amber-100 uppercase tracking-tighter">
-                                                            会議
-                                                        </span>
-                                                    ) : (
-                                                        <span className={`font-black text-indigo-700 ${assignedClassLabel.length > 4 ? 'text-[9px] tracking-tighter block leading-tight' : ''}`}>
-                                                            {assignedClassLabel}
-                                                        </span>
-                                                    )}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
+                                        return (
+                                            <div key={teacher.id} className="contents">
+                                                {showHeader && (
+                                                    <tr className="bg-slate-50/80 border-y border-y-slate-200">
+                                                        <td colSpan={allSlots.length + 1} className="p-2.5 pl-4 sticky left-0 z-10 bg-slate-50/90 backdrop-blur-sm">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="w-1.5 h-4 bg-brand-500 rounded-full" />
+                                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                                                    {currentGrade === 999 ? "所属なし / 専科教員" : `${currentGrade}学年所属 / 校務分掌`}
+                                                                    <span className="w-20 h-[1px] bg-slate-200" />
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                <tr className="hover:bg-indigo-50/30 transition-colors group">
+                                                    <td className="border border-slate-200 p-3 font-black text-slate-700 sticky left-0 z-10 bg-white group-hover:bg-slate-50 whitespace-nowrap border-r-2 border-r-slate-300">
+                                                        {getTeacherLabel(teacher)}
+                                                    </td>
+                                                    {allSlots.map((slot, i) => {
+                                                        const assignedClassLabels: string[] = [];
+                                                        for (const classId of Object.keys(data.schedule)) {
+                                                            const cell = data.schedule[classId]?.[slot.day]?.[slot.period];
+                                                            if (cell?.teacherId === teacher.id || cell?.teacherIds?.includes(teacher.id)) {
+                                                                const cls = data.classes.find(c => c.id === classId);
+                                                                if (cls) assignedClassLabels.push(getClassLabel(cls));
+                                                            }
+                                                        }
+                                                        const assignedClassLabel = assignedClassLabels.join(", ");
+                                                        const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== slot.day;
+                                                        const isUnavailable = teacher.unavailable.some(us => us.day === slot.day && us.period === slot.period);
+                                                        const isParticipatingMeeting = teacher.meetingIds?.some(mid =>
+                                                            data.meetings.find(m => m.id === mid && m.slots.some(s => s.day === slot.day && s.period === slot.period))
+                                                        );
+
+                                                        return (
+                                                            <td
+                                                                key={i}
+                                                                className={`border border-slate-200 p-1 text-center h-14 min-w-[3.5rem] ${isUnavailable ? "bg-slate-100/50 slanted-stripes" : ""} ${isLastOfData ? 'border-r-4 border-r-slate-200' : ''} ${isParticipatingMeeting ? 'bg-amber-50/20' : ''}`}
+                                                            >
+                                                                {isParticipatingMeeting ? (
+                                                                    <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1 rounded border border-amber-100 uppercase tracking-tighter">
+                                                                        会議
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className={`font-black text-indigo-700 ${assignedClassLabel.length > 4 ? 'text-[9px] tracking-tighter block leading-tight' : ''}`}>
+                                                                        {assignedClassLabel}
+                                                                    </span>
+                                                                )}
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            </div>
+                                        );
+                                    });
+                                })()}
                             </tbody>
                         </table>
                     </div>
