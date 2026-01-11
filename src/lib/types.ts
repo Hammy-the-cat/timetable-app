@@ -76,6 +76,7 @@ export interface ClassGroup {
 export interface ScheduleCell {
   subjectId?: string;
   teacherId?: string;
+  teacherIds?: string[]; // 複数担任制への対応
   roomId?: string;
   note?: string;
 }

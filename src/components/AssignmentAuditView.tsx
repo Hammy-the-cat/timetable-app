@@ -73,7 +73,7 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
             Object.entries(schedule).forEach(([classId, week]) => {
                 Object.values(week).forEach((periods) => {
                     Object.values(periods).forEach((cell) => {
-                        if (cell.teacherId === teacher.id) {
+                        if (cell.teacherId === teacher.id || cell.teacherIds?.includes(teacher.id)) {
                             actualCount++;
                             const cls = classes.find(c => c.id === classId);
                             if (cls) {

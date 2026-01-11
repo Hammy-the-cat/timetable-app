@@ -17,11 +17,22 @@ const getCellData = (
   if (!cell?.subjectId) return { title: "", subtitle: "", teacher: "" };
   const subject = data.subjects.find((s) => s.id === cell.subjectId);
   const room = data.classrooms.find((r) => r.id === cell.roomId);
-  const teacher = data.teachers.find((t) => t.id === cell.teacherId);
+
+  // 複数担任対応
+  let teacherName = "";
+  if (cell.teacherIds && cell.teacherIds.length > 0) {
+    teacherName = cell.teacherIds
+      .map(id => data.teachers.find(t => t.id === id)?.name)
+      .filter(Boolean)
+      .join(", ");
+  } else if (cell.teacherId) {
+    teacherName = data.teachers.find((t) => t.id === cell.teacherId)?.name ?? "";
+  }
+
   return {
     title: subject?.name ?? "",
     subtitle: room?.name ?? "",
-    teacher: teacher?.name ?? "",
+    teacher: teacherName,
   };
 };
 

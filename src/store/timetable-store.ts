@@ -15,6 +15,7 @@ import {
   WeeklySlot,
 } from "@/lib/types";
 import { createEmptyWeek, createInitialData } from "@/lib/school";
+import { generateAutoTimetable } from "@/lib/auto-generator";
 
 type NewEntity<T> = Omit<T, "id"> & { id?: string };
 
@@ -51,6 +52,7 @@ export interface TimetableStore {
   deleteClass: (id: string) => void;
 
   replaceData: (payload: TimetableData) => void;
+  autoGenerate: () => void;
   reset: () => void;
 }
 
@@ -282,6 +284,10 @@ export const useTimetableStore = create<TimetableStore>()(
             lastUpdated: now(),
           },
           selectedClassId: payload.classes[0]?.id ?? "",
+        })),
+      autoGenerate: () =>
+        set((state) => ({
+          data: generateAutoTimetable(state.data),
         })),
       reset: () =>
         set(() => ({

@@ -190,7 +190,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                             let assignedClassLabel = "";
                                             for (const classId of Object.keys(data.schedule)) {
                                                 const cell = data.schedule[classId]?.[slot.day]?.[slot.period];
-                                                if (cell?.teacherId === teacher.id) {
+                                                if (cell?.teacherId === teacher.id || cell?.teacherIds?.includes(teacher.id)) {
                                                     const cls = data.classes.find(c => c.id === classId);
                                                     if (cls) assignedClassLabel = getClassLabel(cls);
                                                     break;
@@ -271,6 +271,12 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                                     if (cell.teacherId) {
                                                         const t = data.teachers.find(teacher => teacher.id === cell.teacherId);
                                                         if (t) teachers.add(t.name);
+                                                    }
+                                                    if (cell.teacherIds) {
+                                                        cell.teacherIds.forEach(tId => {
+                                                            const t = data.teachers.find(teacher => teacher.id === tId);
+                                                            if (t) teachers.add(t.name);
+                                                        });
                                                     }
                                                 }
                                             });
