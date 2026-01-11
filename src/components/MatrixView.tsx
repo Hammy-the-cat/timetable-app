@@ -220,15 +220,15 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                             {getTeacherLabel(teacher)}
                                         </td>
                                         {allSlots.map((slot, i) => {
-                                            let assignedClassLabel = "";
+                                            const assignedClassLabels: string[] = [];
                                             for (const classId of Object.keys(data.schedule)) {
                                                 const cell = data.schedule[classId]?.[slot.day]?.[slot.period];
                                                 if (cell?.teacherId === teacher.id || cell?.teacherIds?.includes(teacher.id)) {
                                                     const cls = data.classes.find(c => c.id === classId);
-                                                    if (cls) assignedClassLabel = getClassLabel(cls);
-                                                    break;
+                                                    if (cls) assignedClassLabels.push(getClassLabel(cls));
                                                 }
                                             }
+                                            const assignedClassLabel = assignedClassLabels.join(", ");
                                             const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== slot.day;
                                             const isUnavailable = teacher.unavailable.some(us => us.day === slot.day && us.period === slot.period);
                                             const isParticipatingMeeting = teacher.meetingIds?.some(mid =>
@@ -245,7 +245,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                                             会議
                                                         </span>
                                                     ) : (
-                                                        <span className="font-black text-indigo-700">
+                                                        <span className={`font-black text-indigo-700 ${assignedClassLabel.length > 4 ? 'text-[9px] tracking-tighter block leading-tight' : ''}`}>
                                                             {assignedClassLabel}
                                                         </span>
                                                     )}
