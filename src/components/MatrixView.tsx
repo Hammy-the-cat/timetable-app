@@ -36,6 +36,39 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
             m.slots.some((s) => s.day === day && s.period === period)
         )?.name;
 
+    const SUBJECT_ORDER = ["国語", "社会", "数学", "理科", "英語", "体育", "音楽", "美術", "技術", "家庭"];
+
+    const sortedTeachers = useMemo(() => {
+        const getSubjectScore = (s: string) => {
+            const idx = SUBJECT_ORDER.indexOf(s);
+            return idx === -1 ? 999 : idx;
+        };
+
+        return [...data.teachers].sort((a, b) => {
+            // Grade derivation
+            const getOrderGrade = (t: Teacher) => {
+                if (t.homeroomClassIds && t.homeroomClassIds.length > 0) {
+                    const cls = data.classes.find(c => c.id === t.homeroomClassIds![0]);
+                    if (cls) return cls.grade;
+                }
+                if (t.taughtGrades && t.taughtGrades.length > 0) {
+                    return Math.min(...t.taughtGrades);
+                }
+                return 999; // Non-affiliated
+            };
+
+            const gradeA = getOrderGrade(a);
+            const gradeB = getOrderGrade(b);
+
+            if (gradeA !== gradeB) return gradeA - gradeB;
+
+            // Subject sorting
+            const subA = a.subjects[0] || "";
+            const subB = b.subjects[0] || "";
+            return getSubjectScore(subA) - getSubjectScore(subB);
+        });
+    }, [data.teachers, data.classes]);
+
     return (
         <div className="flex flex-col gap-8 p-6 bg-slate-50 min-h-screen">
             {/* Header Info */}
@@ -181,7 +214,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                 </tr>
                             </thead>
                             <tbody>
-                                {data.teachers.map((teacher) => (
+                                {sortedTeachers.map((teacher) => (
                                     <tr key={teacher.id} className="hover:bg-indigo-50/30 transition-colors group">
                                         <td className="border border-slate-200 p-3 font-black text-slate-700 sticky left-0 z-10 bg-white group-hover:bg-slate-50 whitespace-nowrap border-r-2 border-r-slate-300">
                                             {getTeacherLabel(teacher)}
