@@ -150,7 +150,7 @@ export function SettingsPanel({
   sections,
 }: SettingsPanelProps) {
   const [teacherName, setTeacherName] = useState("");
-  const [teacherSubjects, setTeacherSubjects] = useState("");
+  const [teacherSubjects, setTeacherSubjects] = useState<string[]>([]);
   const [teacherGrades, setTeacherGrades] = useState<number[]>([]);
   const [teacherBlocks, setTeacherBlocks] = useState<WeeklySlot[]>([]);
   const [teacherSlot, setTeacherSlot] = useState<WeeklySlot>(defaultSlot);
@@ -357,12 +357,37 @@ export function SettingsPanel({
                   </div>
                 </div>
 
-                <input
-                  placeholder="担当教科 (例: 数学, 総合)"
-                  className="w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-brand-500"
-                  value={teacherSubjects}
-                  onChange={(e) => setTeacherSubjects(e.target.value)}
-                />
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">担当教科</label>
+                    <button
+                      type="button"
+                      onClick={() => setTeacherSubjects([])}
+                      className={`text-[8px] px-1.5 py-0.5 rounded font-black border transition-all ${teacherSubjects.length === 0 ? 'bg-slate-500 border-slate-600 text-white shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-slate-100'}`}
+                    >
+                      クリア
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 max-h-40 overflow-y-auto p-1 border border-slate-100 rounded bg-white">
+                    {Array.from(new Set(subjects.map(s => s.name))).map(subName => (
+                      <label key={subName} className="flex items-center gap-1.5 p-1 px-2 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
+                        <input
+                          type="checkbox"
+                          className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
+                          checked={teacherSubjects.includes(subName)}
+                          onChange={() => {
+                            setTeacherSubjects(prev =>
+                              prev.includes(subName) ? prev.filter(s => s !== subName) : [...prev, subName]
+                            );
+                          }}
+                        />
+                        <span className={`text-[9px] font-bold ${teacherSubjects.includes(subName) ? 'text-brand-600' : 'text-slate-400'}`}>
+                          {subName}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
 
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">授業不可コマ</label>
@@ -380,7 +405,7 @@ export function SettingsPanel({
               <button
                 onClick={() => {
                   if (!teacherName.trim()) return;
-                  let subjects = teacherSubjects.split(",").map(s => s.trim()).filter(Boolean);
+                  let subjects = [...teacherSubjects];
                   if (teacherRole === "homeroom") {
                     const autoSubjects = ["道徳", "学活"];
 
@@ -408,7 +433,7 @@ export function SettingsPanel({
                     unavailable: teacherBlocks,
                     meetingIds: teacherMeetings
                   });
-                  setTeacherName(""); setTeacherSubjects(""); setTeacherClasses([]); setTeacherBlocks([]);
+                  setTeacherName(""); setTeacherSubjects([]); setTeacherClasses([]); setTeacherBlocks([]);
                   setTeacherRole("assistant"); setTeacherHomeroomClassIds([]); setTeacherGrades([]);
                   setTeacherMeetings([]);
                 }}
@@ -489,12 +514,38 @@ export function SettingsPanel({
                           </div>
                         )}
                       </div>
-                      <input
-                        className="w-full rounded border border-brand-200 px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-brand-500"
-                        defaultValue={t.subjects.join(", ")}
-                        onBlur={(e) => onUpdateTeacher(t.id, { subjects: e.target.value.split(",").map(si => si.trim()).filter(Boolean) })}
-                        placeholder="担当教科（カンマ区切り）"
-                      />
+                      <div className="space-y-1 p-2 bg-slate-50 rounded border border-slate-100">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[8px] font-black text-slate-400 uppercase">担当教科</label>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateTeacher(t.id, { subjects: [] })}
+                            className={`text-[7px] px-1 py-0.5 rounded font-black border transition-all ${t.subjects.length === 0 ? 'bg-slate-500 border-slate-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-100'}`}
+                          >
+                            クリア
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-0.5 max-h-32 overflow-y-auto">
+                          {Array.from(new Set(subjects.map(s => s.name))).map(subName => (
+                            <label key={subName} className="flex items-center gap-1 p-1 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
+                              <input
+                                type="checkbox"
+                                className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
+                                checked={t.subjects.includes(subName)}
+                                onChange={() => {
+                                  const next = t.subjects.includes(subName)
+                                    ? t.subjects.filter((s: string) => s !== subName)
+                                    : [...t.subjects, subName];
+                                  onUpdateTeacher(t.id, { subjects: next });
+                                }}
+                              />
+                              <span className={`text-[8px] font-bold ${t.subjects.includes(subName) ? 'text-brand-600' : 'text-slate-400'}`}>
+                                {subName}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                       <div className="space-y-1">
                         <label className="text-[10px] font-extrabold text-slate-400 uppercase">担当設定の変更</label>
                         <div className="flex gap-1 mb-2">
