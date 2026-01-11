@@ -120,27 +120,34 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
     };
 
     // --- 特殊処理: 固定配置 (Fixed Slots) の処理 ---
-    subjects.filter(sub => (sub.fixedSlots?.length ?? 0) > 0).forEach(sub => {
-        sub.fixedSlots?.forEach(slot => {
-            classes.forEach(cls => {
-                const need = classNeeds[cls.id]?.find(n => n.subjectId === sub.id);
-                if (!need || need.count <= 0) return;
+    subjects.forEach(sub => {
+        if (!sub.fixedSlots) return;
 
-                // すでに何かが入っている場合はスキップ
-                if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
+        Object.entries(sub.fixedSlots).forEach(([gradeStr, slots]) => {
+            const grade = parseInt(gradeStr);
+            const targetClasses = classes.filter(c => c.grade === grade);
 
-                // 先生が空いているか確認
-                const allTeachersFree = need.teacherIds.every(tId => checkTeacherFree(tId, slot.day, slot.period, newSchedule));
-                if (!allTeachersFree) return;
+            slots.forEach(slot => {
+                targetClasses.forEach(cls => {
+                    const need = classNeeds[cls.id]?.find(n => n.subjectId === sub.id);
+                    if (!need || need.count <= 0) return;
 
-                // 配置実行
-                if (!newSchedule[cls.id][slot.day]) newSchedule[cls.id][slot.day] = {};
-                newSchedule[cls.id][slot.day][slot.period] = {
-                    subjectId: sub.id,
-                    teacherIds: need.teacherIds,
-                    teacherId: need.teacherIds[0],
-                };
-                need.count--;
+                    // すでに何かが入っている場合はスキップ
+                    if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
+
+                    // 先生が空いているか確認
+                    const allTeachersFree = need.teacherIds.every(tId => checkTeacherFree(tId, slot.day, slot.period, newSchedule));
+                    if (!allTeachersFree) return;
+
+                    // 配置実行
+                    if (!newSchedule[cls.id][slot.day]) newSchedule[cls.id][slot.day] = {};
+                    newSchedule[cls.id][slot.day][slot.period] = {
+                        subjectId: sub.id,
+                        teacherIds: need.teacherIds,
+                        teacherId: need.teacherIds[0],
+                    };
+                    need.count--;
+                });
             });
         });
     });
