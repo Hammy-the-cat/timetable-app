@@ -178,9 +178,9 @@ export function SettingsPanel({
   const [classSpecialType, setClassSpecialType] = useState<"intellectual" | "emotional" | "physical">("intellectual");
   const [classExchangeClassId, setClassExchangeClassId] = useState("");
 
-  const [subjectFixedSlots, setSubjectFixedSlots] = useState<Record<number, WeeklySlot[]>>({});
+  const [subjectFixedSlots, setSubjectFixedSlots] = useState<Record<string, WeeklySlot[]>>({});
   const [subjectFixedSlot, setSubjectFixedSlot] = useState<WeeklySlot>(defaultSlot);
-  const [subjectFixedGrade, setSubjectFixedGrade] = useState<number>(1);
+  const [subjectFixedTarget, setSubjectFixedTarget] = useState<string>("1");
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -1042,13 +1042,20 @@ export function SettingsPanel({
                 <div className="flex items-center justify-between">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">固定配置設定</label>
                   <select
-                    className="text-[9px] border border-slate-200 rounded px-1 py-0.5 outline-none font-bold text-brand-600"
-                    value={subjectFixedGrade}
-                    onChange={(e) => setSubjectFixedGrade(Number(e.target.value))}
+                    className="text-[9px] border border-slate-200 rounded px-1 py-0.5 outline-none font-bold text-brand-600 bg-white"
+                    value={subjectFixedTarget}
+                    onChange={(e) => setSubjectFixedTarget(e.target.value)}
                   >
-                    {[1, 2, 3].map(g => (
-                      <option key={g} value={g}>{g}年生</option>
-                    ))}
+                    <optgroup label="学年全体">
+                      {[1, 2, 3].map(g => (
+                        <option key={g} value={g.toString()}>{g}年生 全体</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="クラス個別">
+                      {classes.map(c => (
+                        <option key={c.id} value={c.id}>{c.grade}-{c.label}</option>
+                      ))}
+                    </optgroup>
                   </select>
                 </div>
                 <SlotPicker slot={subjectFixedSlot} onChange={setSubjectFixedSlot} />
@@ -1056,26 +1063,32 @@ export function SettingsPanel({
                   type="button"
                   className="w-full text-[10px] bg-slate-200 hover:bg-slate-300 py-1.5 rounded font-bold transition-colors"
                   onClick={() => {
-                    const current = subjectFixedSlots[subjectFixedGrade] || [];
+                    const current = subjectFixedSlots[subjectFixedTarget] || [];
                     if (current.some(s => s.day === subjectFixedSlot.day && s.period === subjectFixedSlot.period)) return;
                     setSubjectFixedSlots({
                       ...subjectFixedSlots,
-                      [subjectFixedGrade]: [...current, subjectFixedSlot]
+                      [subjectFixedTarget]: [...current, subjectFixedSlot]
                     });
                   }}
                 >
-                  {subjectFixedGrade}年の固定コマを追加
+                  {(() => {
+                    const isGrade = /^\d+$/.test(subjectFixedTarget);
+                    const targetCls = classes.find(c => c.id === subjectFixedTarget);
+                    return isGrade ? `${subjectFixedTarget}年全体` : (targetCls ? `${targetCls.grade}-${targetCls.label}` : "クラス");
+                  })()} に追加
                 </button>
                 <div className="space-y-1.5">
-                  {[1, 2, 3].map(g => (
-                    (subjectFixedSlots[g]?.length ?? 0) > 0 && (
-                      <div key={g} className="space-y-0.5">
-                        <span className="text-[8px] font-black text-slate-400">{g}年生:</span>
+                  {Object.entries(subjectFixedSlots).map(([target, slots]) => (
+                    (slots.length > 0) && (
+                      <div key={target} className="space-y-0.5">
+                        <span className="text-[8px] font-black text-slate-400">
+                          {/^\d+$/.test(target) ? `${target}年生全体:` : `${classes.find(c => c.id === target)?.grade}-${classes.find(c => c.id === target)?.label}:`}
+                        </span>
                         <SlotList
-                          value={subjectFixedSlots[g] || []}
+                          value={slots}
                           onRemove={(s) => {
-                            const next = (subjectFixedSlots[g] || []).filter(item => !(item.day === s.day && item.period === s.period));
-                            setSubjectFixedSlots({ ...subjectFixedSlots, [g]: next });
+                            const next = slots.filter(item => !(item.day === s.day && item.period === s.period));
+                            setSubjectFixedSlots({ ...subjectFixedSlots, [target]: next });
                           }}
                         />
                       </div>
@@ -1380,23 +1393,33 @@ export function SettingsPanel({
                             <div className="flex items-center justify-between">
                               <span className="text-[9px] font-black text-slate-400 block ml-1 uppercase">固定配置設定</span>
                               <select
-                                className="text-[8px] border border-slate-200 rounded px-1 outline-none font-bold text-brand-600"
-                                value={subjectFixedGrade}
-                                onChange={(e) => setSubjectFixedGrade(Number(e.target.value))}
+                                className="text-[8px] border border-slate-200 rounded px-1 outline-none font-bold text-brand-600 bg-white"
+                                value={subjectFixedTarget}
+                                onChange={(e) => setSubjectFixedTarget(e.target.value)}
                               >
-                                {[1, 2, 3].map(g => (
-                                  <option key={g} value={g}>{g}年</option>
-                                ))}
+                                <optgroup label="学年全体">
+                                  {[1, 2, 3].map(g => (
+                                    <option key={g} value={g.toString()}>{g}年全体</option>
+                                  ))}
+                                </optgroup>
+                                <optgroup label="クラス個別">
+                                  {classes.map(c => (
+                                    <option key={c.id} value={c.id}>{c.grade}-{c.label}</option>
+                                  ))}
+                                </optgroup>
                               </select>
                             </div>
 
                             <div className="space-y-1.5 py-1">
-                              {[1, 2, 3].map(g => {
-                                const slots = s.fixedSlots?.[g] || [];
+                              {Object.entries(s.fixedSlots || {}).map(([target, slots]) => {
                                 if (slots.length === 0) return null;
+                                const isGrade = /^\d+$/.test(target);
+                                const cls = classes.find(c => c.id === target);
                                 return (
-                                  <div key={g} className="space-y-1">
-                                    <span className="text-[8px] font-black text-slate-400 ml-1">{g}年:</span>
+                                  <div key={target} className="space-y-1">
+                                    <span className="text-[8px] font-black text-slate-400 ml-1">
+                                      {isGrade ? `${target}年全体:` : `${cls?.grade}-${cls?.label}:`}
+                                    </span>
                                     <div className="flex flex-wrap gap-1">
                                       {slots.map((slot, idx) => (
                                         <span key={idx} className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 flex items-center gap-1">
@@ -1404,11 +1427,11 @@ export function SettingsPanel({
                                           <button
                                             type="button"
                                             onClick={() => {
-                                              const nextForGrade = slots.filter((_, i) => i !== idx);
+                                              const nextForTarget = slots.filter((_, i) => i !== idx);
                                               onUpdateSubject(s.id, {
                                                 fixedSlots: {
                                                   ...(s.fixedSlots || {}),
-                                                  [g]: nextForGrade
+                                                  [target]: nextForTarget
                                                 }
                                               });
                                             }}
@@ -1432,18 +1455,22 @@ export function SettingsPanel({
                               <button
                                 type="button"
                                 onClick={() => {
-                                  const currentForGrade = s.fixedSlots?.[subjectFixedGrade] || [];
-                                  if (currentForGrade.some(x => x.day === subjectFixedSlot.day && x.period === subjectFixedSlot.period)) return;
+                                  const currentForTarget = s.fixedSlots?.[subjectFixedTarget] || [];
+                                  if (currentForTarget.some(x => x.day === subjectFixedSlot.day && x.period === subjectFixedSlot.period)) return;
                                   onUpdateSubject(s.id, {
                                     fixedSlots: {
                                       ...(s.fixedSlots || {}),
-                                      [subjectFixedGrade]: [...currentForGrade, subjectFixedSlot]
+                                      [subjectFixedTarget]: [...currentForTarget, subjectFixedSlot]
                                     }
                                   });
                                 }}
                                 className="text-[9px] bg-brand-500 text-white px-2 py-1.5 rounded font-bold hover:bg-brand-600"
                               >
-                                {subjectFixedGrade}年に追加
+                                {(() => {
+                                  const isGrade = /^\d+$/.test(subjectFixedTarget);
+                                  const targetCls = classes.find(c => c.id === subjectFixedTarget);
+                                  return isGrade ? `${subjectFixedTarget}年全体` : (targetCls ? `${targetCls.grade}-${targetCls.label}` : "クラス");
+                                })()} に追加
                               </button>
                             </div>
                           </div>
@@ -1558,21 +1585,24 @@ export function SettingsPanel({
                             {s.fixedSlots && Object.values(s.fixedSlots).some(v => v.length > 0) && (
                               <div className="mt-1.5 flex flex-col gap-1 w-full border-t border-slate-50 pt-1">
                                 <span className="text-[7px] bg-rose-50 text-rose-600 border border-rose-200 px-1 py-0.5 rounded font-black flex items-center gap-0.5 w-fit">
-                                  <span className="w-1 h-1 bg-rose-500 rounded-full" /> 学年別固定配置
+                                  <span className="w-1 h-1 bg-rose-500 rounded-full" /> 固定配置
                                 </span>
                                 <div className="flex flex-col gap-1 ml-1">
-                                  {Object.entries(s.fixedSlots).map(([grade, slots]) => (
-                                    slots.length > 0 && (
-                                      <div key={grade} className="flex flex-wrap gap-1.5 items-center">
-                                        <span className="text-[7px] text-slate-400 font-bold">{grade}年:</span>
+                                  {Object.entries(s.fixedSlots).map(([target, slots]) => {
+                                    if (slots.length === 0) return null;
+                                    const isGrade = /^\d+$/.test(target);
+                                    const cls = classes.find(c => c.id === target);
+                                    return (
+                                      <div key={target} className="flex flex-wrap gap-1.5 items-center">
+                                        <span className="text-[7px] text-slate-400 font-bold">{isGrade ? `${target}年:` : `${cls?.grade}-${cls?.label}:`}</span>
                                         {slots.map((slot, idx) => (
                                           <span key={idx} className="text-[7px] text-rose-500 font-bold bg-rose-50/50 px-1 border border-rose-100 rounded">
                                             {formatSlot(slot)}
                                           </span>
                                         ))}
                                       </div>
-                                    )
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}

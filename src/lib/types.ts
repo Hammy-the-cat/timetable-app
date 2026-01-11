@@ -29,7 +29,7 @@ export interface Subject {
   jointClassGroups?: Record<number, string[][]>; // Grade -> Array of groups (each group is string[])
   isMultiGrade?: boolean; // 新たに追加：学年をまたぐ複式授業
   multiGradeGroups?: string[][]; // 学年を超えたグループ設定 [[classId1, classId2, ...], [...]]
-  fixedSlots?: Record<number, WeeklySlot[]>; // 学年ごとの追加：特定の曜日の時限に固定したい場合（例：3年英語は火曜1限にする等）
+  fixedSlots?: Record<string, WeeklySlot[]>; // クラス・学年ごとの固定配置：'3'(学年) または 'classId'(クラス) がキー
   notes?: string;
 }
 

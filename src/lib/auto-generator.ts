@@ -123,9 +123,17 @@ export function generateAutoTimetable(data: TimetableData): TimetableData {
     subjects.forEach(sub => {
         if (!sub.fixedSlots) return;
 
-        Object.entries(sub.fixedSlots).forEach(([gradeStr, slots]) => {
-            const grade = parseInt(gradeStr);
-            const targetClasses = classes.filter(c => c.grade === grade);
+        Object.entries(sub.fixedSlots).forEach(([targetKey, slots]) => {
+            let targetClasses: ClassGroup[] = [];
+            if (/^\d+$/.test(targetKey)) {
+                // 学年指定 (1, 2, 3)
+                const grade = parseInt(targetKey);
+                targetClasses = classes.filter(c => c.grade === grade);
+            } else {
+                // クラスID指定
+                const cls = classes.find(c => c.id === targetKey);
+                if (cls) targetClasses = [cls];
+            }
 
             slots.forEach(slot => {
                 targetClasses.forEach(cls => {
