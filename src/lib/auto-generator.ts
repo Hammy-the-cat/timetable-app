@@ -6,7 +6,7 @@ import { DAY_CONFIGS, getEffectiveQuota } from "./school";
  * 制約：体育は学校全体で1コマに1グループ（単独または合同）のみ。
  */
 export function generateAutoTimetable(data: TimetableData): TimetableData {
-    const MAX_ATTEMPTS = 100;
+    const MAX_ATTEMPTS = 1000;
     let bestSchedule: any = null;
     let bestScore = -1;
 
@@ -259,15 +259,14 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     const shuffledSlots = [...allSlots].sort(() => Math.random() - 0.5);
     const shuffledClasses = [...classes].sort(() => Math.random() - 0.5);
 
-    const attemptSlot = (slot: { day: Weekday, period: number }, cls: ClassGroup, mode: 'strict-joint' | 'all') => {
+    const attemptSlot = (slot: { day: Weekday, period: number }, cls: ClassGroup, filter: (cand: any) => boolean) => {
         if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
 
         const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
-        const candidates = classNeeds[cls.id].filter(n => n.count > 0 && !subjToday.includes(n.subjectId));
+        const candidates = classNeeds[cls.id].filter(n => n.count > 0 && !subjToday.includes(n.subjectId) && filter(n));
 
         for (const candidate of candidates) {
             const partners = getPartners(candidate.subjectId, cls.grade, cls.id);
-            if (mode === 'strict-joint' && partners.length === 0) continue;
 
             // --- ルール：体育は学校全体で1コマに1グループ ---
             if (candidate.name === "体育" && isSubjectInSlotSchoolWide("体育", slot.day, slot.period, newSchedule)) continue;
@@ -305,8 +304,22 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         }
     };
 
-    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, 'strict-joint')));
-    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, 'all')));
+    // --- Phase 1: 体育 (優先度：1) ---
+    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, (n) => n.name === "体育")));
+
+    // --- Phase 2: 特別支援学級の交流授業 (優先度：2) ---
+    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, (n) => {
+        if (n.name === "体育") return false;
+        const partners = getPartners(n.subjectId, c.grade, c.id);
+        const hasExchange = partners.some(pId => {
+            const pCls = classes.find(x => x.id === pId);
+            return (c.type === "special" && pCls?.type === "normal") || (c.type === "normal" && pCls?.type === "special");
+        });
+        return hasExchange;
+    })));
+
+    // --- Phase 3: その他の授業 (優先度：3) ---
+    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, (n) => true)));
 
     // 4. 高度なスワップ（入れ替え）
     let advancedSwapCount = 0;
