@@ -1,6 +1,6 @@
 "use client";
 
-import { DAY_CONFIGS, formatSlot, getEffectiveQuota } from "@/lib/school";
+import { DAY_CONFIGS, formatSlot } from "@/lib/school";
 import { TimetableData, WeeklySlot, ScheduleCell, Weekday, ClassGroup, Teacher } from "@/lib/types";
 import { useMemo } from "react";
 
@@ -367,26 +367,20 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                             <td className="border-r border-slate-200 p-3 font-black text-slate-800 sticky left-0 z-10 bg-white group-hover:bg-slate-50 text-center">
                                                 {getClassLabel(cls)}
                                             </td>
-                                            {stats.map((stat, idx) => {
-                                                const subject = data.subjects[idx];
-                                                const target = Math.ceil(getEffectiveQuota(subject, cls.grade, cls.type || "normal", cls.specialType));
-                                                const isShort = stat.count < target;
-
-                                                return (
-                                                    <td key={idx} className={`border-r border-slate-100 p-2 text-center align-middle ${isShort ? 'bg-amber-50/80 shadow-inner' : ''}`}>
-                                                        {stat.count > 0 ? (
-                                                            <div className="flex flex-col gap-0.5">
-                                                                <span className={`font-bold ${isShort ? 'text-amber-700' : 'text-slate-900'}`}>{stat.count}h</span>
-                                                                <span className="text-[8px] text-slate-400 font-medium truncate max-w-[70px] mx-auto" title={stat.teacherNames}>
-                                                                    {stat.teacherNames}
-                                                                </span>
-                                                            </div>
-                                                        ) : (
-                                                            <span className={isShort ? 'text-amber-400 font-black' : 'text-slate-200'}>-</span>
-                                                        )}
-                                                    </td>
-                                                );
-                                            })}
+                                            {stats.map((stat, idx) => (
+                                                <td key={idx} className="border-r border-slate-100 p-2 text-center align-middle">
+                                                    {stat.count > 0 ? (
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <span className="font-bold text-slate-900">{stat.count}h</span>
+                                                            <span className="text-[8px] text-slate-400 font-medium truncate max-w-[70px] mx-auto" title={stat.teacherNames}>
+                                                                {stat.teacherNames}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-slate-200">-</span>
+                                                    )}
+                                                </td>
+                                            ))}
                                             <td className={`p-3 text-center font-black text-sm ${totalHours !== 29 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
                                                 {totalHours}
                                             </td>
@@ -405,10 +399,6 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                     <div className="flex items-center gap-2">
                         <div className="w-3 h-3 bg-emerald-500 rounded-sm" />
                         <span className="text-[10px] font-bold text-slate-500">29時間（正常）</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-amber-400 rounded-sm" />
-                        <span className="text-[10px] font-bold text-slate-500">配当時数不足</span>
                     </div>
                 </div>
             </div>
