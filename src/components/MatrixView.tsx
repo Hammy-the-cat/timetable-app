@@ -244,15 +244,27 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                                         {getTeacherLabel(teacher)}
                                                     </td>
                                                     {allSlots.map((slot, i) => {
-                                                        const assignedClassLabels: string[] = [];
+                                                        const displayLabels: string[] = [];
                                                         for (const classId of Object.keys(data.schedule)) {
                                                             const cell = data.schedule[classId]?.[slot.day]?.[slot.period];
                                                             if (cell?.teacherId === teacher.id || cell?.teacherIds?.includes(teacher.id)) {
                                                                 const cls = data.classes.find(c => c.id === classId);
-                                                                if (cls) assignedClassLabels.push(getClassLabel(cls));
+                                                                if (!cls) continue;
+                                                                const sub = data.subjects.find(s => s.id === cell.subjectId);
+
+                                                                if (sub?.name === "道徳" || sub?.name === "学活") {
+                                                                    displayLabels.push(`${getClassLabel(cls)}${sub.name}`);
+                                                                } else if (sub?.name === "総合") {
+                                                                    const label = `${cls.grade}年総合`;
+                                                                    if (!displayLabels.includes(label)) {
+                                                                        displayLabels.push(label);
+                                                                    }
+                                                                } else {
+                                                                    displayLabels.push(getClassLabel(cls));
+                                                                }
                                                             }
                                                         }
-                                                        const assignedClassLabel = assignedClassLabels.join(", ");
+                                                        const assignedClassLabel = displayLabels.join(", ");
                                                         const isLastOfData = i < allSlots.length - 1 && allSlots[i + 1].day !== slot.day;
                                                         const isUnavailable = teacher.unavailable.some(us => us.day === slot.day && us.period === slot.period);
                                                         const isParticipatingMeeting = teacher.meetingIds?.some(mid =>
