@@ -164,6 +164,7 @@ export function SettingsPanel({
   const [teacherHomeroomClassIds, setTeacherHomeroomClassIds] = useState<string[]>([]);
   const [teacherMeetings, setTeacherMeetings] = useState<string[]>([]);
   const [teacherSubjectAssignments, setTeacherSubjectAssignments] = useState<SubjectAssignment[]>([]);
+  const [teacherAllowDouble, setTeacherAllowDouble] = useState(false);
 
   const [roomName, setRoomName] = useState("");
   const [roomType, setRoomType] = useState<"standard" | "special">("standard");
@@ -428,6 +429,19 @@ export function SettingsPanel({
                   </div>
                 )}
 
+                <div className="flex items-center gap-2 px-1 py-1">
+                  <input
+                    type="checkbox"
+                    id="teacher-double"
+                    className="w-3.5 h-3.5 text-brand-500 rounded border-slate-300 focus:ring-brand-500"
+                    checked={teacherAllowDouble}
+                    onChange={(e) => setTeacherAllowDouble(e.target.checked)}
+                  />
+                  <label htmlFor="teacher-double" className="text-[10px] font-bold text-slate-500 cursor-pointer select-none">
+                    1日2時間可能設定
+                  </label>
+                </div>
+
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">授業不可コマ</label>
                   <SlotPicker slot={teacherSlot} onChange={setTeacherSlot} />
@@ -486,11 +500,12 @@ export function SettingsPanel({
                     homeroomClassIds: teacherRole === "homeroom" ? teacherHomeroomClassIds : [],
                     unavailable: teacherBlocks,
                     meetingIds: teacherMeetings,
-                    subjectAssignments: teacherSubjectAssignments
+                    subjectAssignments: teacherSubjectAssignments,
+                    allowDoubleSubject: teacherAllowDouble
                   });
                   setTeacherName(""); setTeacherSubjects([]); setTeacherBlocks([]);
                   setTeacherRole("assistant"); setTeacherHomeroomClassIds([]); setTeacherGrades([]);
-                  setTeacherMeetings([]); setTeacherSubjectAssignments([]);
+                  setTeacherMeetings([]); setTeacherSubjectAssignments([]); setTeacherAllowDouble(false);
                 }}
                 className="w-full py-2 bg-brand-500 text-white rounded-md text-sm font-bold shadow-sm hover:bg-brand-600 transition-colors"
               >
@@ -731,6 +746,19 @@ export function SettingsPanel({
                               </label>
                             ))}
                           </div>
+                        </div>
+
+                        <div className="mt-2 flex items-center gap-2 px-2 py-1 bg-slate-50 rounded border border-slate-100">
+                          <input
+                            type="checkbox"
+                            id={`edit-double-${t.id}`}
+                            className="w-3.5 h-3.5 text-brand-500 rounded border-slate-300 focus:ring-brand-500"
+                            checked={t.allowDoubleSubject || false}
+                            onChange={(e) => onUpdateTeacher(t.id, { allowDoubleSubject: e.target.checked })}
+                          />
+                          <label htmlFor={`edit-double-${t.id}`} className="text-[9px] font-bold text-slate-500 cursor-pointer select-none">
+                            1日2時間可能設定
+                          </label>
                         </div>
 
                         {t.role === "homeroom" && (

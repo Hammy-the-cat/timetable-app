@@ -166,6 +166,28 @@ export const collectWarnings = (
           message: `${subject.name}のコマ数が上限を超えています(${count}/${subject.weeklyQuota})。`,
         });
       }
+
+      // --- 1日1回制限のチェック ---
+      const daySchedule = data.schedule[classId]?.[slot.day] || {};
+      const subjectAlreadyInDay = Object.entries(daySchedule).some(([pStr, c]) => {
+        const p = parseInt(pStr);
+        return p !== slot.period && c.subjectId === cell.subjectId;
+      });
+
+      if (subjectAlreadyInDay) {
+        const tIds = cell.teacherIds || (cell.teacherId ? [cell.teacherId] : []);
+        const canDouble = tIds.some(tId => {
+          const t = data.teachers.find(tx => tx.id === tId);
+          return t?.allowDoubleSubject;
+        });
+
+        if (!canDouble) {
+          warnings.push({
+            type: "subjectQuota",
+            message: `${subject.name}は1日に既に設定されています（「1日2時間可能」設定が必要です）。`,
+          });
+        }
+      }
     }
   }
 

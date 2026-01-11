@@ -263,7 +263,11 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
 
         const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
-        const candidates = classNeeds[cls.id].filter(n => n.count > 0 && !subjToday.includes(n.subjectId) && filter(n));
+        const candidates = classNeeds[cls.id].filter(n => {
+            if (n.count <= 0 || !filter(n)) return false;
+            const canDouble = n.teacherIds.some(tId => teachers.find(tx => tx.id === tId)?.allowDoubleSubject);
+            return canDouble || !subjToday.includes(n.subjectId);
+        });
 
         for (const candidate of candidates) {
             const partners = getPartners(candidate.subjectId, cls.grade, cls.id);
@@ -273,9 +277,13 @@ function runSingleGenerationAttempt(data: TimetableData): any {
 
             const validPartners = partners.filter(pId => {
                 const pNeed = classNeeds[pId]?.find(n => n.subjectId === candidate.subjectId);
+                if (!pNeed || pNeed.count <= 0) return false;
+
                 const isFree = !newSchedule[pId]?.[slot.day]?.[slot.period]?.subjectId;
-                const notToday = !Object.values(newSchedule[pId][slot.day] || {}).some((c: any) => c.subjectId === candidate.subjectId);
-                return pNeed && pNeed.count > 0 && isFree && notToday;
+                const canDouble = pNeed.teacherIds.some(tId => teachers.find(tx => tx.id === tId)?.allowDoubleSubject);
+                const notToday = canDouble || !Object.values(newSchedule[pId][slot.day] || {}).some((c: any) => c.subjectId === candidate.subjectId);
+
+                return isFree && notToday;
             });
 
             if (partners.length > 0 && validPartners.length !== partners.length) continue;
@@ -330,7 +338,10 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             if (advancedSwapCount >= MAX_ADVANCED_SWAPS) break;
 
             const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
-            const needed = classNeeds[cls.id].find(n => n.count > 0 && !subjToday.includes(n.subjectId));
+            const needed = classNeeds[cls.id].find(n => {
+                const canDouble = n.teacherIds.some(tId => teachers.find(tx => tx.id === tId)?.allowDoubleSubject);
+                return n.count > 0 && (canDouble || !subjToday.includes(n.subjectId));
+            });
             if (!needed) continue;
 
             // 体育制限のために邪魔されているか

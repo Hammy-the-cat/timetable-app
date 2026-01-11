@@ -48,6 +48,7 @@ export interface Teacher {
   homeroomClassIds?: string[];
   unavailable: WeeklySlot[];
   meetingIds?: string[]; // 参加する会議のID
+  allowDoubleSubject?: boolean; // 1日2時間可能設定
 }
 
 export interface Classroom {
