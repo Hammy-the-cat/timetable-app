@@ -160,7 +160,6 @@ export function SettingsPanel({
   const [meetingSlots, setMeetingSlots] = useState<WeeklySlot[]>([]);
   const [meetingSlot, setMeetingSlot] = useState<WeeklySlot>(defaultSlot);
 
-  const [teacherClasses, setTeacherClasses] = useState<string[]>([]);
   const [teacherRole, setTeacherRole] = useState<"homeroom" | "assistant">("assistant");
   const [teacherHomeroomClassIds, setTeacherHomeroomClassIds] = useState<string[]>([]);
   const [teacherMeetings, setTeacherMeetings] = useState<string[]>([]);
@@ -180,12 +179,6 @@ export function SettingsPanel({
   const [classExchangeClassId, setClassExchangeClassId] = useState("");
 
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  const toggleClass = (classId: string) => {
-    setTeacherClasses(prev =>
-      prev.includes(classId) ? prev.filter(id => id !== classId) : [...prev, classId]
-    );
-  };
 
   const toggleAssignmentClass = (subjectName: string, classId: string, assignments: SubjectAssignment[], setter: (val: SubjectAssignment[]) => void) => {
     const existing = assignments.find(a => a.subjectName === subjectName);
@@ -337,24 +330,6 @@ export function SettingsPanel({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">担当クラス (他教科の担当)</label>
-                    <div className="grid grid-cols-3 gap-1 max-h-32 overflow-y-auto p-1 border border-slate-100 rounded bg-white">
-                      {classes.map(c => (
-                        <label key={c.id} className="flex items-center justify-center p-1 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
-                          <input
-                            type="checkbox"
-                            className="hidden"
-                            checked={teacherClasses.includes(c.id)}
-                            onChange={() => toggleClass(c.id)}
-                          />
-                          <span className={`text-[9px] font-bold ${teacherClasses.includes(c.id) ? 'text-brand-600' : 'text-slate-400'}`}>
-                            {c.grade}-{c.label}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-500 uppercase">参加する会議</label>
                     <div className="grid grid-cols-2 gap-1 max-h-32 overflow-y-auto p-1 border border-slate-100 rounded bg-white">
                       {meetings.map(m => (
@@ -500,7 +475,6 @@ export function SettingsPanel({
                   onAddTeacher({
                     name: teacherName.trim(),
                     subjects,
-                    assignedClassIds: teacherClasses,
                     taughtGrades: teacherGrades,
                     role: teacherRole,
                     homeroomClassIds: teacherRole === "homeroom" ? teacherHomeroomClassIds : [],
@@ -508,7 +482,7 @@ export function SettingsPanel({
                     meetingIds: teacherMeetings,
                     subjectAssignments: teacherSubjectAssignments
                   });
-                  setTeacherName(""); setTeacherSubjects([]); setTeacherClasses([]); setTeacherBlocks([]);
+                  setTeacherName(""); setTeacherSubjects([]); setTeacherBlocks([]);
                   setTeacherRole("assistant"); setTeacherHomeroomClassIds([]); setTeacherGrades([]);
                   setTeacherMeetings([]); setTeacherSubjectAssignments([]);
                 }}
@@ -601,24 +575,33 @@ export function SettingsPanel({
                           </button>
                         </div>
                         <div className="grid grid-cols-3 gap-0.5 max-h-32 overflow-y-auto">
-                          {Array.from(new Set(subjects.map(s => s.name))).map(subName => (
-                            <label key={subName} className="flex items-center gap-1 p-1 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
-                              <input
-                                type="checkbox"
-                                className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
-                                checked={t.subjects.includes(subName)}
-                                onChange={() => {
-                                  const next = t.subjects.includes(subName)
-                                    ? t.subjects.filter((s: string) => s !== subName)
-                                    : [...t.subjects, subName];
-                                  onUpdateTeacher(t.id, { subjects: next });
-                                }}
-                              />
-                              <span className={`text-[8px] font-bold ${t.subjects.includes(subName) ? 'text-brand-600' : 'text-slate-400'}`}>
-                                {subName}
-                              </span>
-                            </label>
-                          ))}
+                          {Array.from(new Set(subjects.map(s => s.name)))
+                            .filter(sn => !["道徳", "学活", "総合", "自立", "生活"].includes(sn))
+                            .map(subName => (
+                              <label key={subName} className="flex items-center gap-1 p-1 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
+                                  checked={t.subjects.includes(subName)}
+                                  onChange={() => {
+                                    const next = t.subjects.includes(subName)
+                                      ? t.subjects.filter((s: string) => s !== subName)
+                                      : [...t.subjects, subName];
+
+                                    // Remove assignment if subject is removed
+                                    let nextAssignments = t.subjectAssignments || [];
+                                    if (!next.includes(subName)) {
+                                      nextAssignments = nextAssignments.filter(a => a.subjectName !== subName);
+                                    }
+
+                                    onUpdateTeacher(t.id, { subjects: next, subjectAssignments: nextAssignments });
+                                  }}
+                                />
+                                <span className={`text-[8px] font-bold ${t.subjects.includes(subName) ? 'text-brand-600' : 'text-slate-400'}`}>
+                                  {subName}
+                                </span>
+                              </label>
+                            ))}
                         </div>
                       </div>
 
@@ -629,33 +612,35 @@ export function SettingsPanel({
                             教科ごとの担当クラス
                           </label>
                           <div className="space-y-1.5">
-                            {t.subjects.map((subName: string) => (
-                              <div key={subName} className="p-1.5 bg-white rounded border border-indigo-100 space-y-1 shadow-sm">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[9px] font-black text-slate-700">{subName}</span>
+                            {t.subjects
+                              .filter((sn: string) => !["道徳", "学活", "総合", "自立", "生活"].includes(sn))
+                              .map((subName: string) => (
+                                <div key={subName} className="p-1.5 bg-white rounded border border-indigo-100 space-y-1 shadow-sm">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[9px] font-black text-slate-700">{subName}</span>
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-0.5">
+                                    {classes.map(c => {
+                                      const assignments = t.subjectAssignments || [];
+                                      const isAssigned = assignments.find((a: SubjectAssignment) => a.subjectName === subName)?.classIds.includes(c.id);
+                                      return (
+                                        <label key={c.id} className={`flex items-center justify-center p-1 rounded border text-[7px] font-bold cursor-pointer transition-all ${isAssigned
+                                          ? 'bg-indigo-500 border-indigo-600 text-white shadow-sm'
+                                          : 'bg-white border-slate-100 text-slate-400 hover:bg-slate-50'
+                                          }`}>
+                                          <input
+                                            type="checkbox"
+                                            className="hidden"
+                                            checked={isAssigned || false}
+                                            onChange={() => toggleAssignmentClass(subName, c.id, assignments, (val) => onUpdateTeacher(t.id, { subjectAssignments: val }))}
+                                          />
+                                          {c.grade}-{c.label}
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
                                 </div>
-                                <div className="grid grid-cols-4 gap-0.5">
-                                  {classes.map(c => {
-                                    const assignments = t.subjectAssignments || [];
-                                    const isAssigned = assignments.find((a: SubjectAssignment) => a.subjectName === subName)?.classIds.includes(c.id);
-                                    return (
-                                      <label key={c.id} className={`flex items-center justify-center p-1 rounded border text-[7px] font-bold cursor-pointer transition-all ${isAssigned
-                                        ? 'bg-indigo-500 border-indigo-600 text-white shadow-sm'
-                                        : 'bg-white border-slate-100 text-slate-400 hover:bg-slate-50'
-                                        }`}>
-                                        <input
-                                          type="checkbox"
-                                          className="hidden"
-                                          checked={isAssigned || false}
-                                          onChange={() => toggleAssignmentClass(subName, c.id, assignments, (val) => onUpdateTeacher(t.id, { subjectAssignments: val }))}
-                                        />
-                                        {c.grade}-{c.label}
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
+                              ))}
                           </div>
                         </div>
                       )}
@@ -712,20 +697,6 @@ export function SettingsPanel({
                                     onUpdateTeacher(t.id, patch);
                                   }} />
                                   <span className={`text-[9px] font-bold ${t.taughtGrades?.includes(g) ? 'text-brand-600' : 'text-slate-400'}`}>{g}年</span>
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="space-y-1 p-2 bg-slate-50 rounded border border-slate-100">
-                            <label className="text-[8px] font-black text-slate-400 uppercase">担当クラス(他教科)</label>
-                            <div className="grid grid-cols-3 gap-0.5 max-h-20 overflow-y-auto">
-                              {classes.map(c => (
-                                <label key={c.id} className="flex items-center justify-center p-1 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
-                                  <input type="checkbox" className="hidden" defaultChecked={t.assignedClassIds?.includes(c.id)} onChange={(e) => {
-                                    const next = e.target.checked ? [...(t.assignedClassIds || []), c.id] : (t.assignedClassIds || []).filter((id: string) => id !== c.id);
-                                    onUpdateTeacher(t.id, { assignedClassIds: next });
-                                  }} />
-                                  <span className={`text-[8px] font-bold ${t.assignedClassIds?.includes(c.id) ? 'text-brand-600' : 'text-slate-400'}`}>{c.grade}-{c.label}</span>
                                 </label>
                               ))}
                             </div>
@@ -863,7 +834,7 @@ export function SettingsPanel({
                           )}
                           <div className="flex gap-1 flex-wrap">
                             {t.role === "homeroom" ? (
-                              t.assignedClassIds?.map((classId: string) => {
+                              t.homeroomClassIds?.map((classId: string) => {
                                 const cls = classes.find(c => c.id === classId);
                                 return cls ? (
                                   <span key={classId} className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-bold">

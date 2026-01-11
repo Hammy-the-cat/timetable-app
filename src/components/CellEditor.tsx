@@ -50,38 +50,32 @@ export function CellEditor({
       return t.role === "homeroom" && !!t.homeroomClassIds?.includes(classId);
     }
 
-    // B. 個別教科担当設定がある場合 (最優先)
-    if (t.subjectAssignments && t.subjectAssignments.length > 0 && selectedSubject) {
-      const assignment = t.subjectAssignments.find(a => a.subjectName === selectedSubject.name);
-      if (assignment) {
-        // この教科に関しては担当クラスが明示されているので、それに従う
-        if (!assignment.classIds.includes(classId)) return false;
-        // 担当クラスに入っていれば、以下の汎用フィルターはスキップしてOK
+    // B. 特別支援学級の「自立」「生活」: そのクラスの担任のみ
+    if (subName === "自立" || subName === "生活") {
+      const cls = data.classes.find(c => c.id === classId);
+      if (cls?.type === "special") {
+        return t.role === "homeroom" && !!t.homeroomClassIds?.includes(classId);
       }
     }
 
-    // C. 総合: 所属学年で判定
+    // C. 総合: 所属学年、またはその学級の担任
     if (subName === "総合") {
       const cls = data.classes.find(c => c.id === classId);
-      const grade = cls?.grade || currentGrade;
-      if (!grade) return false;
-      return !!t.taughtGrades?.includes(grade) || (t.role === "homeroom" && !!t.homeroomClassIds?.includes(classId));
+      return !!t.taughtGrades?.includes(cls?.grade || 0) || (t.role === "homeroom" && !!t.homeroomClassIds?.includes(classId));
     }
 
-    // C. それ以外の教科: 担当クラス設定で判定
-    if (t.assignedClassIds && t.assignedClassIds.length > 0) {
-      if (!t.assignedClassIds.includes(classId)) return false;
+    // D. それ以外の教科: 教科ごとの担当クラス設定がある場合は最優先
+    if (t.subjectAssignments && t.subjectAssignments.length > 0 && selectedSubject) {
+      const assignment = t.subjectAssignments.find(a => a.subjectName === selectedSubject.name);
+      if (assignment) {
+        return assignment.classIds.includes(classId);
+      }
     }
 
-    // D. 教科フィルター（既存: その教科を教えられる登録があるか）
+    // E. 基本フィルター: 名前に教科名が含まれているか、または教科リストに含まれているか
     if (selectedSubject) {
-      const teachesSubject = t.subjects.some(sn =>
-        sn.includes(selectedSubject.name) || selectedSubject.name.includes(subName)
-      );
-      const anyTeacherAssigned = data.teachers.some(tt =>
-        tt.subjects.some(sn => sn.includes(selectedSubject.name))
-      );
-      if (anyTeacherAssigned && !teachesSubject) return false;
+      const teachesSubject = t.subjects.includes(selectedSubject.name);
+      return teachesSubject;
     }
     return true;
   });

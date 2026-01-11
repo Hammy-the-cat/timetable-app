@@ -84,6 +84,46 @@ export const collectWarnings = (
           });
         }
       }
+
+      // 担当資格・割当チェック
+      if (cell.subjectId) {
+        const subject = data.subjects.find((s) => s.id === cell.subjectId);
+        const subName = subject?.name || "";
+        const cls = data.classes.find((c) => c.id === classId);
+
+        // A. 道徳・学活
+        if (subName === "道徳" || subName === "学活") {
+          if (teacher.role !== "homeroom" || !teacher.homeroomClassIds?.includes(classId)) {
+            warnings.push({
+              type: "teacherConflict",
+              message: `${subName}は担任以外の設定はできません。`,
+            });
+          }
+        }
+        // B. 総合
+        else if (subName === "総合") {
+          const isGradeMember = teacher.taughtGrades?.includes(cls?.grade || 0);
+          const isHomeroom = teacher.role === "homeroom" && teacher.homeroomClassIds?.includes(classId);
+          if (!isGradeMember && !isHomeroom) {
+            warnings.push({
+              type: "teacherConflict",
+              message: `総合はその学年所属または担任の先生のみ担当可能です。`,
+            });
+          }
+        }
+        // C. その他 (教科ごとの担当設定)
+        else {
+          if (teacher.subjectAssignments && teacher.subjectAssignments.length > 0) {
+            const assignment = teacher.subjectAssignments.find((a) => a.subjectName === subName);
+            if (assignment && !assignment.classIds.includes(classId)) {
+              warnings.push({
+                type: "teacherConflict",
+                message: `${teacher.name}はこのクラスの「${subName}」は担当していません。`,
+              });
+            }
+          }
+        }
+      }
     }
   }
 

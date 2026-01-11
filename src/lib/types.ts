@@ -42,7 +42,6 @@ export interface Teacher {
   name: string;
   subjects: string[];
   taughtGrades?: number[];
-  assignedClassIds?: string[];
   subjectAssignments?: SubjectAssignment[]; // 教科ごとの担当クラス
   role?: "homeroom" | "assistant";
   homeroomClassIds?: string[];
