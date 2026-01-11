@@ -365,23 +365,25 @@ export function SettingsPanel({
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-1 max-h-40 overflow-y-auto p-1 border border-slate-100 rounded bg-white">
-                    {Array.from(new Set(subjects.map(s => s.name))).map(subName => (
-                      <label key={subName} className="flex items-center gap-1.5 p-1 px-2 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
-                        <input
-                          type="checkbox"
-                          className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
-                          checked={teacherSubjects.includes(subName)}
-                          onChange={() => {
-                            setTeacherSubjects(prev =>
-                              prev.includes(subName) ? prev.filter(s => s !== subName) : [...prev, subName]
-                            );
-                          }}
-                        />
-                        <span className={`text-[9px] font-bold ${teacherSubjects.includes(subName) ? 'text-brand-600' : 'text-slate-400'}`}>
-                          {subName}
-                        </span>
-                      </label>
-                    ))}
+                    {Array.from(new Set(subjects.map(s => s.name)))
+                      .filter((sn: string) => !["道徳", "学活", "総合", "自立", "生活"].includes(sn))
+                      .map(subName => (
+                        <label key={subName} className="flex items-center gap-1.5 p-1 px-2 rounded border border-slate-100 bg-white cursor-pointer hover:bg-brand-50 transition-colors">
+                          <input
+                            type="checkbox"
+                            className="w-3 h-3 rounded text-brand-500 focus:ring-brand-500"
+                            checked={teacherSubjects.includes(subName)}
+                            onChange={() => {
+                              setTeacherSubjects(prev =>
+                                prev.includes(subName) ? prev.filter(s => s !== subName) : [...prev, subName]
+                              );
+                            }}
+                          />
+                          <span className={`text-[9px] font-bold ${teacherSubjects.includes(subName) ? 'text-brand-600' : 'text-slate-400'}`}>
+                            {subName}
+                          </span>
+                        </label>
+                      ))}
                   </div>
                 </div>
 

@@ -291,7 +291,58 @@ export const useTimetableStore = create<TimetableStore>()(
     }),
     {
       name: "timetable-app-state",
-      version: 1,
+      version: 2,
+      migrate: (persistedState: any, version: number) => {
+        if (version === 1) {
+          const state = persistedState as TimetableStore;
+          if (!state.data) return persistedState;
+
+          const subjects = [...state.data.subjects];
+          const teachers = [...state.data.teachers];
+
+          // 1. 保健体育 -> 体育
+          subjects.forEach(s => {
+            if (s.name === "保健体育") s.name = "体育";
+          });
+          teachers.forEach(t => {
+            t.subjects = t.subjects.map(s => s === "保健体育" ? "体育" : s);
+          });
+
+          // 2. 技術・家庭 -> 技術 & 家庭
+          const techHomeIdx = subjects.findIndex(s => s.name === "技術・家庭" || s.name === "技術家庭");
+          if (techHomeIdx !== -1) {
+            const oldSubject = subjects[techHomeIdx];
+            const techId = "sub-tech";
+            const homeId = "sub-home";
+
+            // Rename old to Tech
+            oldSubject.name = "技術";
+            oldSubject.id = techId;
+
+            // Add new Home
+            const newHome: Subject = {
+              ...oldSubject,
+              id: homeId,
+              name: "家庭",
+              weeklyQuota: 1, // Defaulting if possible
+            };
+            subjects.push(newHome);
+
+            // Update Teachers
+            teachers.forEach(t => {
+              if (t.subjects.includes("技術・家庭") || t.subjects.includes("技術家庭")) {
+                t.subjects = t.subjects.filter(s => s !== "技術・家庭" && s !== "技術家庭");
+                t.subjects.push("技術", "家庭");
+              }
+            });
+          }
+
+          state.data.subjects = subjects;
+          state.data.teachers = teachers;
+          return state;
+        }
+        return persistedState;
+      }
     }
   )
 );
