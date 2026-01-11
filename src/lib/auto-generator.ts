@@ -155,34 +155,9 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             }
         });
 
-        // --- 4. 教員設定に基づく自動合同判定 ---
-        // 同じ教科・同じ学年で、担当教師が完全に一致するクラスは合同とみなす
-        // ★重要：体育または明示的な合同教科の場合のみ判定する（他教科の巻き込み事故防止）
-        teacherJointLookup[sub.id] = {};
-        if (sub.name === "体育" || sub.isJointSubject) {
-            const classTeachers: Record<string, string[]> = {};
-            classes.forEach(c => {
-                classTeachers[c.id] = teachers
-                    .filter(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(c.id)))
-                    .map(t => t.id)
-                    .sort();
-            });
-
-            classes.forEach(cA => {
-                const tA = classTeachers[cA.id];
-                if (tA.length === 0) return;
-                classes.forEach(cB => {
-                    if (cA.id === cB.id) return;
-                    const tB = classTeachers[cB.id];
-                    if (cA.grade === cB.grade || sub.isMultiGrade) {
-                        if (tA.length === tB.length && tA.every((v, i) => v === tB[i])) {
-                            if (!teacherJointLookup[sub.id][cA.id]) teacherJointLookup[sub.id][cA.id] = [];
-                            teacherJointLookup[sub.id][cA.id].push(cB.id);
-                        }
-                    }
-                });
-            });
-        }
+        // --- 4. 教員設定に基づく自動合同判定 (廃止) ---
+        // ユーザーからの要望により、自動的な教員判定による合同グループ化は行いません。
+        // 合同設定は設定画面での「合同」設定、または「特別支援交流」設定に厳密に従います。
     });
 
     // 芋づる式にすべてのパートナーを取得する関数
@@ -198,8 +173,7 @@ function runSingleGenerationAttempt(data: TimetableData): any {
             const partners = [
                 ...(jointGroupsLookup[subId]?.[gradeStr]?.[currentId] || []),
                 ...(multiGradeLookup[subId]?.[currentId] || []),
-                ...(exchangeLookup[subId]?.[currentId] || []),
-                ...(teacherJointLookup[subId]?.[currentId] || [])
+                ...(exchangeLookup[subId]?.[currentId] || [])
             ];
 
             for (const p of partners) {
