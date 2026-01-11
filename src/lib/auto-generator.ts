@@ -46,6 +46,38 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     const { classes, teachers, subjects, schedule } = data;
     const newSchedule = JSON.parse(JSON.stringify(schedule));
 
+    // --- Phase 0: Cleanup invalid existing assignments (e.g. conflicting with meetings) ---
+    // (この関数内で定義される isTeacherAvailableBase を使用するため、定義の後に移動するか、
+    // ここでインラインでチェックを行います。今回は定義を前に持ってくるか検討しましたが、
+    // シンプルに counts 算出の前に「現在の schedule 自体」を不整合チェックして書き換えます。)
+    classes.forEach(cls => {
+        if (!newSchedule[cls.id]) return;
+        Object.keys(newSchedule[cls.id]).forEach((dayStr) => {
+            const day = dayStr as Weekday;
+            Object.keys(newSchedule[cls.id][day]).forEach((periodStr) => {
+                const period = parseInt(periodStr);
+                const cell = newSchedule[cls.id][day][period];
+                if (!cell || !cell.subjectId) return;
+
+                const tIds = cell.teacherIds || (cell.teacherId ? [cell.teacherId] : []);
+                // 会議・不可時間の再チェック
+                const isInvalid = tIds.some((tId: string) => {
+                    const t = teachers.find(x => x.id === tId);
+                    if (!t) return false;
+                    const inMeeting = t.meetingIds?.some((mid: string) =>
+                        data.meetings.some(m => m.id === mid && m.slots.some(s => s.day === day && s.period === period))
+                    );
+                    const isUnavailable = t.unavailable.some(s => s.day === day && s.period === period);
+                    return inMeeting || isUnavailable;
+                });
+
+                if (isInvalid) {
+                    delete newSchedule[cls.id][day][period];
+                }
+            });
+        });
+    });
+
     // 必要時数の算出
     const classNeeds: Record<string, { subjectId: string; count: number; teacherIds: string[]; isJoint: boolean; name: string }[]> = {};
     classes.forEach(cls => {
@@ -137,18 +169,28 @@ function runSingleGenerationAttempt(data: TimetableData): any {
         return false;
     };
 
-    const checkTeacherFree = (tIds: string[], day: Weekday, period: number, currentSchedule: any): boolean => {
+    // ヘルパー：先生がその時間に空いているか（会議・不可時間のみチェック）
+    const isTeacherAvailableBase = (tIds: string[], day: Weekday, period: number): boolean => {
         return tIds.every(tId => {
             const t = teachers.find(x => x.id === tId);
             if (!t) return true;
-            if (t.meetingIds && data.meetings.some(m => t.meetingIds?.includes(m.id) && m.slots.some(s => s.day === day && s.period === period))) return false;
+            if (t.meetingIds && t.meetingIds.length > 0) {
+                if (data.meetings.some(m => t.meetingIds?.includes(m.id) && m.slots.some(s => s.day === day && s.period === period))) return false;
+            }
             if (t.unavailable.some(s => s.day === day && s.period === period)) return false;
+            return true;
+        });
+    };
+
+    const checkTeacherFree = (tIds: string[], day: Weekday, period: number, currentSchedule: any): boolean => {
+        if (!isTeacherAvailableBase(tIds, day, period)) return false;
+        for (const tId of tIds) {
             for (const cId of Object.keys(currentSchedule)) {
                 const cell = currentSchedule[cId][day]?.[period];
                 if (cell?.teacherIds?.includes(tId) || cell?.teacherId === tId) return false;
             }
-            return true;
-        });
+        }
+        return true;
     };
 
     const hasPrepPeriod = (tId: string, day: Weekday, currentSchedule: any, exceptSlot?: { period: number }): boolean => {
