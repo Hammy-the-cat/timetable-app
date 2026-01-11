@@ -45,11 +45,10 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
         };
 
         return [...data.teachers].sort((a, b) => {
-            // 1. 所属学年 (taughtGrades) または 担任学級 から最優先の学年を判定
             const getPrimaryGrade = (t: Teacher) => {
-                // 「所属学年(総合向け)」設定を最優先
+                // 「所属学年(総合向け)」設定を尊重（複数ある場合は最高学年をメインとみなす）
                 if (t.taughtGrades && t.taughtGrades.length > 0) {
-                    return Math.min(...t.taughtGrades);
+                    return Math.max(...t.taughtGrades);
                 }
                 // 設定がない場合は担任学級から判定
                 if (t.homeroomClassIds && t.homeroomClassIds.length > 0) {
