@@ -111,11 +111,14 @@ function runSingleGenerationAttempt(data: TimetableData): any {
     });
 
     // 連動情報の整理
+    // 連動情報の整理
     const jointGroupsLookup: any = {};
     const multiGradeLookup: any = {};
     const exchangeLookup: any = {};
+    const teacherJointLookup: any = {}; // 同じ教科・同じ担当教員による自動合同
 
     subjects.forEach(sub => {
+        // --- 1. 明示的な合同設定 ---
         if (sub.isJointSubject && sub.jointClassGroups) {
             jointGroupsLookup[sub.id] = {};
             Object.entries(sub.jointClassGroups).forEach(([gStr, groups]) => {
@@ -125,12 +128,16 @@ function runSingleGenerationAttempt(data: TimetableData): any {
                 }));
             });
         }
+
+        // --- 2. 複式学級設定 ---
         if (sub.isMultiGrade && sub.multiGradeGroups) {
             multiGradeLookup[sub.id] = {};
             sub.multiGradeGroups.forEach(group => group.forEach(cid => {
                 multiGradeLookup[sub.id][cid] = group.filter(v => v !== cid);
             }));
         }
+
+        // --- 3. 交流学級設定 (特別支援 ⇔ 通常) ---
         exchangeLookup[sub.id] = {};
         classes.forEach(cls => {
             if (cls.type === "special" && cls.exchangeClassId) {
@@ -142,20 +149,71 @@ function runSingleGenerationAttempt(data: TimetableData): any {
                     const regId = cls.exchangeClassId;
                     if (!exchangeLookup[sub.id][cls.id]) exchangeLookup[sub.id][cls.id] = [];
                     if (!exchangeLookup[sub.id][regId]) exchangeLookup[sub.id][regId] = [];
-                    exchangeLookup[sub.id][cls.id].push(regId);
-                    exchangeLookup[sub.id][regId].push(cls.id);
+                    // 双方向に追加
+                    if (!exchangeLookup[sub.id][cls.id].includes(regId)) exchangeLookup[sub.id][cls.id].push(regId);
+                    if (!exchangeLookup[sub.id][regId].includes(cls.id)) exchangeLookup[sub.id][regId].push(cls.id);
                 }
             }
         });
+
+        // --- 4. 教員設定に基づく自動合同判定 ---
+        // 同じ学年で、担当教師が完全に一致するクラスは「合同」とみなす（特に体育などで重要）
+        teacherJointLookup[sub.id] = {};
+        const classTeachers: Record<string, string[]> = {};
+        classes.forEach(c => {
+            classTeachers[c.id] = teachers
+                .filter(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(c.id)))
+                .map(t => t.id)
+                .sort();
+        });
+
+        // 同じ教師セットを持つクラス同士をリンク
+        const grades = Array.from(new Set(classes.map(c => c.grade)));
+        grades.forEach(g => {
+            const targetClasses = classes.filter(c => c.grade === g);
+            targetClasses.forEach(cA => {
+                const tA = classTeachers[cA.id];
+                if (tA.length === 0) return;
+                targetClasses.forEach(cB => {
+                    if (cA.id === cB.id) return;
+                    const tB = classTeachers[cB.id];
+                    // 教師が完全に一致する場合
+                    if (tA.length === tB.length && tA.every((v, i) => v === tB[i])) {
+                        if (!teacherJointLookup[sub.id][cA.id]) teacherJointLookup[sub.id][cA.id] = [];
+                        if (!teacherJointLookup[sub.id][cA.id].includes(cB.id)) teacherJointLookup[sub.id][cA.id].push(cB.id);
+                    }
+                });
+            });
+        });
     });
 
-    const getPartners = (subId: string, grade: number, clsId: string) => {
+    // 芋づる式にすべてのパートナーを取得する関数
+    const getPartners = (subId: string, grade: number, clsId: string): string[] => {
+        const result = new Set<string>();
+        const queue = [clsId];
+        const visited = new Set<string>([clsId]);
         const gradeStr = grade.toString();
-        return Array.from(new Set([
-            ...(jointGroupsLookup[subId]?.[gradeStr]?.[clsId] || []),
-            ...(multiGradeLookup[subId]?.[clsId] || []),
-            ...(exchangeLookup[subId]?.[clsId] || [])
-        ]));
+
+        while (queue.length > 0) {
+            const currentId = queue.shift()!;
+
+            // 全ての接続元から候補を取得
+            const directPartners = [
+                ...(jointGroupsLookup[subId]?.[gradeStr]?.[currentId] || []),
+                ...(multiGradeLookup[subId]?.[currentId] || []),
+                ...(exchangeLookup[subId]?.[currentId] || []),
+                ...(teacherJointLookup[subId]?.[currentId] || [])
+            ];
+
+            for (const p of directPartners) {
+                if (!visited.has(p)) {
+                    visited.add(p);
+                    result.add(p);
+                    queue.push(p);
+                }
+            }
+        }
+        return Array.from(result);
     };
 
     // ヘルパー：学校全体の特定スロットでの特定教科（体育など）の使用をチェック
