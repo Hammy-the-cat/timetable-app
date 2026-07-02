@@ -7,6 +7,31 @@ export interface DayConfig {
   periods: number;
 }
 
+export type SchoolType = "juniorHigh" | "elementary" | "highSchool" | "other";
+
+export interface SchoolSettings {
+  schoolName: string;
+  yearLabel: string;
+  schoolType: SchoolType;
+  days: DayConfig[];
+}
+
+// 合同授業ルール（例: 保体 1年 1・2組合同 / 3・4組合同）
+export interface JointLessonRule {
+  id: string;
+  subjectId: string;
+  grade: number;
+  classGroups: string[][];
+}
+
+// 交流授業ルール（例: 1年5組 → 1年2組と交流。対象教科を指定）
+export interface ExchangeLessonRule {
+  id: string;
+  specialClassId: string;
+  exchangeClassId: string;
+  subjectIds: string[];
+}
+
 export interface WeeklySlot {
   day: Weekday;
   period: number;
@@ -30,6 +55,7 @@ export interface Subject {
   isMultiGrade?: boolean; // 新たに追加：学年をまたぐ複式授業
   multiGradeGroups?: string[][]; // 学年を超えたグループ設定 [[classId1, classId2, ...], [...]]
   fixedSlots?: Record<string, WeeklySlot[]>; // クラス・学年ごとの固定配置：'3'(学年) または 'classId'(クラス) がキー
+  allowDoubleInDay?: boolean; // 1日に複数回入れてよいか
   notes?: string;
 }
 
@@ -49,6 +75,7 @@ export interface Teacher {
   unavailable: WeeklySlot[];
   meetingIds?: string[]; // 参加する会議のID
   allowDoubleSubject?: boolean; // 1日2時間可能設定
+  isPartTime?: boolean; // 非常勤かどうか
 }
 
 export interface Classroom {
@@ -89,12 +116,16 @@ export type TimetableMap = Record<string, WeekSchedule>;
 
 export interface TimetableData {
   version: string;
+  settings: SchoolSettings;
   classes: ClassGroup[];
   subjects: Subject[];
   teachers: Teacher[];
   classrooms: Classroom[];
   meetings: Meeting[];
+  jointRules: JointLessonRule[];
+  exchangeRules: ExchangeLessonRule[];
   schedule: TimetableMap;
+  setupCompleted?: boolean;
   lastUpdated: string;
 }
 

@@ -90,10 +90,24 @@ export const collectWarnings = (
         const subject = data.subjects.find((s) => s.id === cell.subjectId);
         const subName = subject?.name || "";
         const cls = data.classes.find((c) => c.id === classId);
+        const isHomeroomForClass =
+          teacher.id === cls?.homeroomTeacherId ||
+          (teacher.role === "homeroom" && !!teacher.homeroomClassIds?.includes(classId));
+        const exchangeClassId =
+          cls?.type === "special" && cls.exchangeClassId && subject
+            ? (() => {
+              const usesExchange =
+                (cls.specialType === "intellectual" && !!subject.intellectualExchange?.[cls.grade]) ||
+                (cls.specialType === "emotional" && !!subject.emotionalExchange?.[cls.grade]) ||
+                (cls.specialType === "physical" && !!subject.physicalExchange?.[cls.grade]) ||
+                !!subject.specialGradeExchange?.[cls.grade];
+              return usesExchange ? cls.exchangeClassId : undefined;
+            })()
+            : undefined;
 
         // A. 道徳・学活
         if (subName === "道徳" || subName === "学活") {
-          if (teacher.role !== "homeroom" || !teacher.homeroomClassIds?.includes(classId)) {
+          if (!isHomeroomForClass) {
             warnings.push({
               type: "teacherConflict",
               message: `${subName}は担任以外の設定はできません。`,
@@ -103,7 +117,7 @@ export const collectWarnings = (
         // B. 総合
         else if (subName === "総合") {
           const isGradeMember = teacher.taughtGrades?.includes(cls?.grade || 0);
-          const isHomeroom = teacher.role === "homeroom" && teacher.homeroomClassIds?.includes(classId);
+          const isHomeroom = isHomeroomForClass;
           if (!isGradeMember && !isHomeroom) {
             warnings.push({
               type: "teacherConflict",
@@ -115,7 +129,7 @@ export const collectWarnings = (
         else {
           if (teacher.subjectAssignments && teacher.subjectAssignments.length > 0) {
             const assignment = teacher.subjectAssignments.find((a) => a.subjectName === subName);
-            if (assignment && !assignment.classIds.includes(classId)) {
+            if (assignment && !assignment.classIds.includes(classId) && !assignment.classIds.includes(exchangeClassId ?? "")) {
               warnings.push({
                 type: "teacherConflict",
                 message: `${teacher.name}はこのクラスの「${subName}」は担当していません。`,
@@ -176,7 +190,7 @@ export const collectWarnings = (
 
       if (subjectAlreadyInDay) {
         const tIds = cell.teacherIds || (cell.teacherId ? [cell.teacherId] : []);
-        const canDouble = tIds.some(tId => {
+        const canDouble = !!subject.allowDoubleInDay || tIds.some(tId => {
           const t = data.teachers.find(tx => tx.id === tId);
           return t?.allowDoubleSubject;
         });

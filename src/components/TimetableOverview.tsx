@@ -1,9 +1,7 @@
 ﻿"use client";
 
-import { DAY_CONFIGS, formatSlot } from "@/lib/school";
+import { formatSlot, getDays } from "@/lib/school";
 import { TimetableData, WeekSchedule, Weekday } from "@/lib/types";
-
-const maxPeriods = Math.max(...DAY_CONFIGS.map((day) => day.periods));
 
 const getClassLabel = (grade: number, label: string) => `${grade}-${label}`;
 
@@ -37,6 +35,8 @@ const getCellData = (
 };
 
 export function TimetableOverview({ data }: { data: TimetableData }) {
+  const dayConfigs = getDays(data);
+  const maxPeriods = Math.max(...dayConfigs.map((day) => day.periods));
   const teacherAssignments = data.teachers.map((teacher) => {
     const slots: { classLabel: string; slotLabel: string; subject?: string }[] = [];
 
@@ -100,7 +100,7 @@ export function TimetableOverview({ data }: { data: TimetableData }) {
                     <thead>
                       <tr>
                         <th className="w-8"></th>
-                        {DAY_CONFIGS.map((day) => (
+                        {dayConfigs.map((day) => (
                           <th
                             key={day.key}
                             className="text-[10px] font-black text-slate-400 py-1"
@@ -116,7 +116,7 @@ export function TimetableOverview({ data }: { data: TimetableData }) {
                           <th className="text-[10px] font-black text-slate-300 pr-1">
                             {period}
                           </th>
-                          {DAY_CONFIGS.map((day) => {
+                          {dayConfigs.map((day) => {
                             const cell = getCellData(data, week, day.key, period);
                             const disabled = day.periods < period;
                             if (disabled) return <td key={`${day.key}-${period}`} className="bg-slate-50/50 rounded-sm h-10" />;

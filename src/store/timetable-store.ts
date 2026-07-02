@@ -6,16 +6,33 @@ import { persist } from "zustand/middleware";
 import {
   ClassGroup,
   Classroom,
+  ExchangeLessonRule,
+  JointLessonRule,
   Meeting,
   ScheduleCell,
+  SchoolSettings,
   Subject,
   Teacher,
   TimetableData,
   WeekSchedule,
   WeeklySlot,
 } from "@/lib/types";
-import { createEmptyWeek, createInitialData } from "@/lib/school";
-import { generateAutoTimetable } from "@/lib/auto-generator";
+import {
+  applyRulesToData,
+  createEmptyWeek,
+  createInitialData,
+  deriveExchangeRules,
+  deriveJointRules,
+  getDays,
+  DEFAULT_SCHOOL_SETTINGS,
+  reshapeSchedule,
+} from "@/lib/school";
+import {
+  DEFAULT_GENERATION_OPTIONS,
+  GenerationOptions,
+  GenerationReport,
+  generateAutoTimetable,
+} from "@/lib/auto-generator";
 
 type NewEntity<T> = Omit<T, "id"> & { id?: string };
 
@@ -51,8 +68,38 @@ export interface TimetableStore {
   updateClass: (id: string, patch: Partial<ClassGroup>) => void;
   deleteClass: (id: string) => void;
 
+  // School settings / Joint & Exchange rules
+  updateSettings: (patch: Partial<SchoolSettings>) => void;
+  setJointRules: (rules: JointLessonRule[]) => void;
+  setExchangeRules: (rules: ExchangeLessonRule[]) => void;
+  applySetup: (payload: {
+    settings: SchoolSettings;
+    classes: ClassGroup[];
+    subjects: Subject[];
+    teachers: Teacher[];
+    jointRules: JointLessonRule[];
+    exchangeRules: ExchangeLessonRule[];
+  }) => void;
+
   replaceData: (payload: TimetableData) => void;
+
+  // Excel取り込み（授業担当）・年度コピー
+  applyAssignmentImport: (
+    entries: { classId: string; subjectName: string; teacherNames: string[] }[]
+  ) => void;
+  copyToNewYear: (opts: {
+    yearLabel: string;
+    clearUnavailable: boolean;
+    clearMeetings: boolean;
+  }) => void;
+
+  // 空きコマ自動配置
+  generationOptions: GenerationOptions;
+  setGenerationOptions: (patch: Partial<GenerationOptions>) => void;
+  lastReport: GenerationReport | null;
+  clearReport: () => void;
   autoGenerate: () => void;
+
   clearSchedule: () => void;
   reset: () => void;
 }
@@ -82,7 +129,7 @@ export const useTimetableStore = create<TimetableStore>()(
   persist(
     (set) => ({
       data: createInitialData(),
-      selectedClassId: "class-1a",
+      selectedClassId: "class-1-1",
       setSelectedClassId: (classId) => set({ selectedClassId: classId }),
       updateCell: (classId, slot, patch) =>
         set((state) => {
@@ -191,20 +238,39 @@ export const useTimetableStore = create<TimetableStore>()(
           },
         })),
       updateSubject: (id, patch) =>
-        set((state) => ({
-          data: {
-            ...state.data,
-            subjects: state.data.subjects.map((s) =>
-              s.id === id ? { ...s, ...patch } : s
-            ),
-            lastUpdated: now(),
-          },
-        })),
+        set((state) => {
+          const subjects = state.data.subjects.map((s) =>
+            s.id === id ? { ...s, ...patch } : s
+          );
+          // 旧形式の合同・交流フィールドを直接編集した場合はルールにも反映して同期を保つ
+          const touchesJoint = "jointClassGroups" in patch || "isJointSubject" in patch;
+          const touchesExchange =
+            "intellectualExchange" in patch ||
+            "emotionalExchange" in patch ||
+            "physicalExchange" in patch ||
+            "specialGradeExchange" in patch;
+          return {
+            data: {
+              ...state.data,
+              subjects,
+              jointRules: touchesJoint ? deriveJointRules(subjects) : state.data.jointRules,
+              exchangeRules: touchesExchange
+                ? deriveExchangeRules(state.data.classes, subjects)
+                : state.data.exchangeRules,
+              lastUpdated: now(),
+            },
+          };
+        }),
       deleteSubject: (id) =>
         set((state) => ({
           data: {
             ...state.data,
             subjects: state.data.subjects.filter((s) => s.id !== id),
+            jointRules: state.data.jointRules.filter((r) => r.subjectId !== id),
+            exchangeRules: state.data.exchangeRules.map((r) => ({
+              ...r,
+              subjectIds: r.subjectIds.filter((sid) => sid !== id),
+            })),
             lastUpdated: now(),
           },
         })),
@@ -239,7 +305,7 @@ export const useTimetableStore = create<TimetableStore>()(
           const newClass = withId(classGroup, "class");
           const schedule = {
             ...state.data.schedule,
-            [newClass.id]: createEmptyWeek(),
+            [newClass.id]: createEmptyWeek(getDays(state.data)),
           };
           return {
             data: {
@@ -252,15 +318,31 @@ export const useTimetableStore = create<TimetableStore>()(
           };
         }),
       updateClass: (id, patch) =>
-        set((state) => ({
-          data: {
-            ...state.data,
-            classes: state.data.classes.map((c) =>
-              c.id === id ? { ...c, ...patch } : c
-            ),
-            lastUpdated: now(),
-          },
-        })),
+        set((state) => {
+          const classes = state.data.classes.map((c) =>
+            c.id === id ? { ...c, ...patch } : c
+          );
+          // 旧形式の交流先を直接編集した場合はルール側にも反映して同期を保つ
+          const exchangeRules =
+            "exchangeClassId" in patch
+              ? deriveExchangeRules(classes, state.data.subjects).map((derived) => {
+                  const existing = state.data.exchangeRules.find(
+                    (r) => r.specialClassId === derived.specialClassId
+                  );
+                  return existing
+                    ? { ...existing, exchangeClassId: derived.exchangeClassId }
+                    : derived;
+                })
+              : state.data.exchangeRules;
+          return {
+            data: {
+              ...state.data,
+              classes,
+              exchangeRules,
+              lastUpdated: now(),
+            },
+          };
+        }),
       deleteClass: (id) =>
         set((state) => {
           const { [id]: _, ...remainingSchedule } = state.data.schedule;
@@ -270,6 +352,17 @@ export const useTimetableStore = create<TimetableStore>()(
               ...state.data,
               classes: nextClasses,
               schedule: remainingSchedule,
+              jointRules: state.data.jointRules
+                .map((r) => ({
+                  ...r,
+                  classGroups: r.classGroups
+                    .map((g) => g.filter((cid) => cid !== id))
+                    .filter((g) => g.length >= 2),
+                }))
+                .filter((r) => r.classGroups.length > 0),
+              exchangeRules: state.data.exchangeRules.filter(
+                (r) => r.specialClassId !== id && r.exchangeClassId !== id
+              ),
               lastUpdated: now(),
             },
             selectedClassId:
@@ -278,23 +371,186 @@ export const useTimetableStore = create<TimetableStore>()(
                 : state.selectedClassId,
           };
         }),
+      updateSettings: (patch) =>
+        set((state) => {
+          const settings = { ...state.data.settings, ...patch };
+          const daysChanged = "days" in patch;
+          return {
+            data: {
+              ...state.data,
+              settings,
+              schedule: daysChanged
+                ? reshapeSchedule(state.data.schedule, state.data.classes, settings.days)
+                : state.data.schedule,
+              lastUpdated: now(),
+            },
+          };
+        }),
+      setJointRules: (rules) =>
+        set((state) => ({
+          data: applyRulesToData({
+            ...state.data,
+            jointRules: rules,
+            lastUpdated: now(),
+          }),
+        })),
+      setExchangeRules: (rules) =>
+        set((state) => ({
+          data: applyRulesToData({
+            ...state.data,
+            exchangeRules: rules,
+            lastUpdated: now(),
+          }),
+        })),
+      applySetup: (payload) =>
+        set((state) => {
+          const schedule = reshapeSchedule(
+            state.data.schedule,
+            payload.classes,
+            payload.settings.days
+          );
+          const data = applyRulesToData({
+            ...state.data,
+            settings: payload.settings,
+            classes: payload.classes,
+            subjects: payload.subjects,
+            teachers: payload.teachers,
+            jointRules: payload.jointRules,
+            exchangeRules: payload.exchangeRules,
+            schedule,
+            setupCompleted: true,
+            lastUpdated: now(),
+          });
+          const selectedStillExists = payload.classes.some(
+            (c) => c.id === state.selectedClassId
+          );
+          return {
+            data,
+            selectedClassId: selectedStillExists
+              ? state.selectedClassId
+              : payload.classes[0]?.id ?? "",
+          };
+        }),
       replaceData: (payload) =>
         set(() => ({
+          // 旧バージョンのJSON（settings・ルール未保持）も補完して受け入れる
           data: {
             ...payload,
+            settings: payload.settings ?? DEFAULT_SCHOOL_SETTINGS,
+            jointRules: payload.jointRules ?? deriveJointRules(payload.subjects ?? []),
+            exchangeRules:
+              payload.exchangeRules ??
+              deriveExchangeRules(payload.classes ?? [], payload.subjects ?? []),
+            setupCompleted: payload.setupCompleted ?? true,
             lastUpdated: now(),
           },
           selectedClassId: payload.classes[0]?.id ?? "",
         })),
-      autoGenerate: () =>
+      applyAssignmentImport: (entries) =>
+        set((state) => {
+          const teachers: Teacher[] = state.data.teachers.map((t) => ({
+            ...t,
+            subjects: [...t.subjects],
+            subjectAssignments: (t.subjectAssignments ?? []).map((a) => ({
+              subjectName: a.subjectName,
+              classIds: [...a.classIds],
+            })),
+          }));
+
+          const findOrCreate = (name: string): Teacher => {
+            let teacher = teachers.find((t) => t.name === name);
+            if (!teacher) {
+              teacher = withId<Teacher>(
+                { name, subjects: [], subjectAssignments: [], unavailable: [] },
+                "teacher"
+              );
+              teachers.push(teacher);
+            }
+            return teacher;
+          };
+
+          // 取り込み対象の（教科×学級）については、既存の担当割当をいったん外して置き換える
+          entries.forEach(({ classId, subjectName }) => {
+            teachers.forEach((t) => {
+              const assignment = t.subjectAssignments?.find(
+                (a) => a.subjectName === subjectName
+              );
+              if (assignment) {
+                assignment.classIds = assignment.classIds.filter((id) => id !== classId);
+              }
+            });
+          });
+
+          entries.forEach(({ classId, subjectName, teacherNames }) => {
+            teacherNames.forEach((name) => {
+              const teacher = findOrCreate(name);
+              if (!teacher.subjects.includes(subjectName)) {
+                teacher.subjects.push(subjectName);
+              }
+              let assignment = teacher.subjectAssignments!.find(
+                (a) => a.subjectName === subjectName
+              );
+              if (!assignment) {
+                assignment = { subjectName, classIds: [] };
+                teacher.subjectAssignments!.push(assignment);
+              }
+              if (!assignment.classIds.includes(classId)) {
+                assignment.classIds.push(classId);
+              }
+            });
+          });
+
+          teachers.forEach((t) => {
+            t.subjectAssignments = (t.subjectAssignments ?? []).filter(
+              (a) => a.classIds.length > 0
+            );
+          });
+
+          return {
+            data: { ...state.data, teachers, lastUpdated: now() },
+          };
+        }),
+      copyToNewYear: (opts) =>
+        set((state) => {
+          const days = getDays(state.data);
+          const schedule: TimetableData["schedule"] = {};
+          state.data.classes.forEach((cls) => {
+            schedule[cls.id] = createEmptyWeek(days);
+          });
+          return {
+            data: {
+              ...state.data,
+              settings: { ...state.data.settings, yearLabel: opts.yearLabel },
+              teachers: opts.clearUnavailable
+                ? state.data.teachers.map((t) => ({ ...t, unavailable: [] }))
+                : state.data.teachers,
+              meetings: opts.clearMeetings ? [] : state.data.meetings,
+              schedule,
+              lastUpdated: now(),
+            },
+            lastReport: null,
+          };
+        }),
+      generationOptions: DEFAULT_GENERATION_OPTIONS,
+      setGenerationOptions: (patch) =>
         set((state) => ({
-          data: generateAutoTimetable(state.data),
+          generationOptions: { ...state.generationOptions, ...patch },
         })),
+      lastReport: null,
+      clearReport: () => set({ lastReport: null }),
+      autoGenerate: () =>
+        set((state) => {
+          const { data, report } = generateAutoTimetable(
+            state.data,
+            state.generationOptions
+          );
+          return { data, lastReport: report };
+        }),
       clearSchedule: () =>
         set((state) => {
           const emptySchedule: Record<string, any> = {};
           state.data.classes.forEach((cls) => {
-            emptySchedule[cls.id] = createEmptyWeek();
+            emptySchedule[cls.id] = createEmptyWeek(getDays(state.data));
           });
           return {
             data: {
@@ -307,13 +563,36 @@ export const useTimetableStore = create<TimetableStore>()(
       reset: () =>
         set(() => ({
           data: createInitialData(),
-          selectedClassId: "class-1a",
+          selectedClassId: "class-1-1",
         })),
     }),
     {
       name: "timetable-app-state",
-      version: 2,
+      version: 6,
       migrate: (persistedState: any, version: number) => {
+        if (version === 5 && persistedState?.data) {
+          // v5 → v6: SchoolSettings と合同・交流ルールを既存データから導出して追加
+          const data = persistedState.data;
+          return {
+            ...persistedState,
+            data: {
+              ...data,
+              settings: data.settings ?? DEFAULT_SCHOOL_SETTINGS,
+              jointRules: data.jointRules ?? deriveJointRules(data.subjects ?? []),
+              exchangeRules:
+                data.exchangeRules ??
+                deriveExchangeRules(data.classes ?? [], data.subjects ?? []),
+              setupCompleted: data.setupCompleted ?? true,
+            },
+          };
+        }
+        if (version < 5) {
+          return {
+            ...persistedState,
+            data: createInitialData(),
+            selectedClassId: "class-1-1",
+          };
+        }
         if (version === 1) {
           const state = persistedState as TimetableStore;
           if (!state.data) return persistedState;

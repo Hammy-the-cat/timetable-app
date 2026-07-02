@@ -6,6 +6,7 @@ import { DAY_CONFIGS, formatSlot, getEffectiveQuota } from "@/lib/school";
 import {
   ClassGroup,
   Classroom,
+  DayConfig,
   Meeting,
   Subject,
   SubjectAssignment,
@@ -22,11 +23,13 @@ const defaultSlot: WeeklySlot = { day: "mon", period: 1 };
 const SlotPicker = ({
   slot,
   onChange,
+  days = DAY_CONFIGS,
 }: {
   slot: WeeklySlot;
   onChange: (slot: WeeklySlot) => void;
+  days?: DayConfig[];
 }) => {
-  const config = DAY_CONFIGS.find((day) => day.key === slot.day)!;
+  const config = days.find((day) => day.key === slot.day) ?? days[0];
   return (
     <div className="flex gap-2">
       <select
@@ -39,7 +42,7 @@ const SlotPicker = ({
           })
         }
       >
-        {DAY_CONFIGS.map((day) => (
+        {days.map((day) => (
           <option key={day.key} value={day.key}>
             {day.label}
           </option>
@@ -125,6 +128,7 @@ interface SettingsPanelProps {
   onUpdateClass: (id: string, patch: Partial<ClassGroup>) => void;
   onDeleteClass: (id: string) => void;
   sections?: SectionKey[];
+  days?: DayConfig[];
 }
 
 export function SettingsPanel({
@@ -149,6 +153,7 @@ export function SettingsPanel({
   onUpdateClass,
   onDeleteClass,
   sections,
+  days = DAY_CONFIGS,
 }: SettingsPanelProps) {
   const [teacherName, setTeacherName] = useState("");
   const [teacherSubjects, setTeacherSubjects] = useState<string[]>([]);
@@ -444,7 +449,7 @@ export function SettingsPanel({
 
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">授業不可コマ</label>
-                  <SlotPicker slot={teacherSlot} onChange={setTeacherSlot} />
+                  <SlotPicker slot={teacherSlot} onChange={setTeacherSlot} days={days} />
                   <button
                     type="button"
                     className="text-[10px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold transition-colors"
@@ -813,16 +818,16 @@ export function SettingsPanel({
                             <thead>
                               <tr>
                                 <th className="w-6"></th>
-                                {DAY_CONFIGS.map(d => (
+                                {days.map(d => (
                                   <th key={d.key} className="text-[9px] text-slate-400 font-bold p-1">{d.shortLabel}</th>
                                 ))}
                               </tr>
                             </thead>
                             <tbody>
-                              {[1, 2, 3, 4, 5, 6].map(period => (
+                              {Array.from({ length: Math.max(...days.map(d => d.periods)) }, (_, i) => i + 1).map(period => (
                                 <tr key={period}>
                                   <td className="text-[9px] text-slate-400 font-bold text-center">{period}</td>
-                                  {DAY_CONFIGS.map(day => {
+                                  {days.map(day => {
                                     const isUnavailable = t.unavailable.some((u: any) => u.day === day.key && u.period === period);
                                     const outOfRange = day.periods < period;
                                     return (
@@ -1086,7 +1091,7 @@ export function SettingsPanel({
                     </optgroup>
                   </select>
                 </div>
-                <SlotPicker slot={subjectFixedSlot} onChange={setSubjectFixedSlot} />
+                <SlotPicker slot={subjectFixedSlot} onChange={setSubjectFixedSlot} days={days} />
                 <button
                   type="button"
                   className="w-full text-[10px] bg-slate-200 hover:bg-slate-300 py-1.5 rounded font-bold transition-colors"
@@ -1478,7 +1483,7 @@ export function SettingsPanel({
 
                             <div className="flex gap-2 items-end border-t border-slate-50 pt-2">
                               <div className="flex-1">
-                                <SlotPicker slot={subjectFixedSlot} onChange={setSubjectFixedSlot} />
+                                <SlotPicker slot={subjectFixedSlot} onChange={setSubjectFixedSlot} days={days} />
                               </div>
                               <button
                                 type="button"
@@ -1868,7 +1873,7 @@ export function SettingsPanel({
               />
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">曜日・時限の確保</label>
-                <SlotPicker slot={meetingSlot} onChange={setMeetingSlot} />
+                <SlotPicker slot={meetingSlot} onChange={setMeetingSlot} days={days} />
                 <button
                   type="button"
                   className="text-[10px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold transition-colors"

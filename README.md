@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 時間割作成アプリ
 
-## Getting Started
+中学校向けの時間割作成支援アプリです。時間割を完全自動で作るのではなく、学校ごとの複雑な条件を整理し、**たたき台作成・重複チェック・手直し・出力**を支援します。
 
-First, run the development server:
+- 学校固有の条件（学級数・教科・教員・合同授業・交流授業）はすべて画面から設定でき、コードに固定データを持ちません
+- データはブラウザの localStorage に保存され、外部サービスへは送信されません
+
+## 主な機能
+
+| 画面 | 内容 |
+|---|---|
+| ホーム | 設定状況（学級・教員・教科・未設定の担当・配置済みコマ・エラー）のサマリー |
+| 初期設定ウィザード | 学校・年度 → 学年・学級 → 教科・週時数 → 教員 → 担当学級 → 合同・交流 の6ステップ |
+| マトリックス表示 | 全校時間割の一覧編集。コマ編集パネルから合同グループ・交流先への一括反映が可能 |
+| 合同・交流設定 | 保体などの合同グループ、特別支援学級の交流先・交流教科を設定 |
+| 空きコマ自動配置 | 時間予算内で試行し最良の結果を採用。配置できなかったコマは理由つきで表示 |
+| チェック結果 | 教員重複・教室重複・不可コマ・会議・時数過不足・担当未設定・合同/交流のズレ・同日重複を一覧化し、該当コマへジャンプ |
+| 入出力・年度更新 | Excel出力（全校/学級別/教員別/教室別/チェック結果、合同色分け・エラー着色つき）、担当表のExcel取り込み、学級別PDF、JSONバックアップ、年度コピー |
+
+## 開発
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`next.config.ts` で `basePath: '/timetable-app'` を設定しているため、開発サーバーは
+**http://localhost:3000/timetable-app/** で開いてください（`/` は404になります）。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run build   # 静的書き出し（out/ に生成）
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## デプロイ
 
-## Learn More
+`main` ブランチへの push で GitHub Actions（`.github/workflows/deploy.yml`）が走り、GitHub Pages に自動デプロイされます。
 
-To learn more about Next.js, take a look at the following resources:
+## 技術構成
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js (App Router) / TypeScript / Tailwind CSS v4
+- 状態管理: zustand（persist で localStorage 保存、バージョン付きマイグレーション）
+- Excel入出力: exceljs / PDF: Canvas描画 + jsPDF（日本語はシステムフォントで描画）

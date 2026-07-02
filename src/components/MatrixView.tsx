@@ -1,8 +1,8 @@
 "use client";
 
-import { DAY_CONFIGS, formatSlot } from "@/lib/school";
+import { formatSlot, getDays } from "@/lib/school";
 import { TimetableData, WeeklySlot, ScheduleCell, Weekday, ClassGroup, Teacher } from "@/lib/types";
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 
 interface MatrixViewProps {
     data: TimetableData;
@@ -11,16 +11,29 @@ interface MatrixViewProps {
 }
 
 export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps) {
+    const dayConfigs = getDays(data);
     const allSlots = useMemo(() => {
-        return DAY_CONFIGS.flatMap((day) =>
+        return dayConfigs.flatMap((day) =>
             Array.from({ length: day.periods }, (_, i) => ({
                 day: day.key as Weekday,
                 period: i + 1,
             }))
         );
-    }, []);
+    }, [dayConfigs]);
 
     const getClassLabel = (c: ClassGroup) => `${c.grade}-${c.label}`;
+
+    const getSpecialTypeLabel = (c: ClassGroup) => {
+        if (c.specialType === "intellectual") return "知的";
+        if (c.specialType === "emotional") return "自情";
+        if (c.specialType === "physical") return "肢体";
+        return "支援";
+    };
+
+    const getExchangeClassLabel = (c: ClassGroup) => {
+        const exchangeClass = data.classes.find((cls) => cls.id === c.exchangeClassId);
+        return exchangeClass ? `交流: ${exchangeClass.label}組` : "";
+    };
 
     const getSubjectName = (subjectId: string) => {
         return data.subjects.find((s) => s.id === subjectId)?.name || "";
@@ -36,7 +49,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
             m.slots.some((s) => s.day === day && s.period === period)
         )?.name;
 
-    const SUBJECT_ORDER = ["国語", "社会", "数学", "理科", "英語", "体育", "音楽", "美術", "技術", "家庭"];
+    const SUBJECT_ORDER = ["国語", "社会", "数学", "理科", "英語", "保体", "体育", "音楽", "美術", "技術", "家庭", "自立", "生活"];
 
     const getPrimaryGrade = (t: Teacher) => {
         // 1. 担任学級を最優先
@@ -105,7 +118,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                             <thead>
                                 <tr className="bg-slate-50/80 backdrop-blur-md sticky top-0 z-30">
                                     <th className="border border-slate-200 p-4 sticky left-0 z-40 bg-slate-50 text-slate-400 font-black uppercase text-[10px] w-24">Grade-Class</th>
-                                    {DAY_CONFIGS.map((day) => (
+                                    {dayConfigs.map((day) => (
                                         <th
                                             key={day.key}
                                             colSpan={day.periods}
@@ -131,7 +144,14 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                 {data.classes.map((cls) => (
                                     <tr key={cls.id} className="hover:bg-brand-50/30 transition-colors group">
                                         <td className="border border-slate-200 p-3 font-black text-slate-800 sticky left-0 z-10 bg-white group-hover:bg-slate-50 text-center border-r-2 border-r-slate-300">
-                                            {getClassLabel(cls)}
+                                            <div className="flex flex-col items-center gap-1">
+                                                <span>{getClassLabel(cls)}</span>
+                                                {cls.type === "special" && (
+                                                    <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold text-emerald-700">
+                                                        {getSpecialTypeLabel(cls)} {getExchangeClassLabel(cls)}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </td>
                                         {allSlots.map((slot, i) => {
                                             const cell = data.schedule[cls.id]?.[slot.day]?.[slot.period];
@@ -194,7 +214,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                             <thead>
                                 <tr className="bg-slate-50/80 backdrop-blur-md sticky top-0 z-30">
                                     <th className="border border-slate-200 p-4 sticky left-0 z-40 bg-slate-50 text-slate-400 font-black uppercase text-[10px] w-32 text-left">Teacher Name</th>
-                                    {DAY_CONFIGS.map((day) => (
+                                    {dayConfigs.map((day) => (
                                         <th
                                             key={day.key}
                                             colSpan={day.periods}
@@ -225,7 +245,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                         lastGrade = currentGrade;
 
                                         return (
-                                            <div key={teacher.id} className="contents">
+                                            <Fragment key={teacher.id}>
                                                 {showHeader && (
                                                     <tr className="bg-slate-50/80 border-y border-y-slate-200">
                                                         <td colSpan={allSlots.length + 1} className="p-2.5 pl-4 sticky left-0 z-10 bg-slate-50/90 backdrop-blur-sm">
@@ -289,7 +309,7 @@ export function MatrixView({ data, selectedSlot, onSelectSlot }: MatrixViewProps
                                                         );
                                                     })}
                                                 </tr>
-                                            </div>
+                                            </Fragment>
                                         );
                                     });
                                 })()}

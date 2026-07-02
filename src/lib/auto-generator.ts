@@ -1,400 +1,638 @@
-import { TimetableData, Weekday, ScheduleCell, Teacher, Subject, ClassGroup, WeeklySlot } from "./types";
-import { DAY_CONFIGS, getEffectiveQuota } from "./school";
+import {
+    ClassGroup,
+    DayConfig,
+    ScheduleCell,
+    Subject,
+    Teacher,
+    TimetableData,
+    Weekday,
+    WeeklySlot,
+} from "./types";
+import { getDays, getEffectiveQuota } from "./school";
 
 /**
- * タイムテーブル自動生成エンジン (Elite Multi-Pass Optimizer v2)
- * 制約：体育は学校全体で1コマに1グループ（単独または合同）のみ。
+ * 空きコマ自動配置エンジン v3
+ *
+ * - 教員の使用状況・保体の同時実施数をインデックスで管理し、判定を高速化
+ * - 時間予算内で複数回試行し、最も埋まった結果を採用
+ * - 配置できなかったコマについて「なぜ置けなかったか」を集計して返す
  */
-export function generateAutoTimetable(data: TimetableData): TimetableData {
-    const MAX_ATTEMPTS = 1000;
-    let bestSchedule: any = null;
-    let bestScore = -1;
 
-    const targetTotalSlots = data.classes.length * DAY_CONFIGS.reduce((sum, d) => sum + d.periods, 0);
+// ================= オプション・レポート =================
 
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        const result = runSingleGenerationAttempt(data);
-        const score = calculateFillScore(result, data.classes);
-
-        if (score > bestScore) {
-            bestScore = score;
-            bestSchedule = result;
-        }
-        if (score >= targetTotalSlots) break;
-    }
-
-    return {
-        ...data,
-        schedule: bestSchedule,
-        lastUpdated: new Date().toISOString()
-    };
+export interface GenerationOptions {
+    /** 保体（体育館を使う教科）の同時実施グループ数の上限 */
+    peConcurrencyLimit: number;
+    /** 同じ教科を同じ日に重ねない（「1日複数可」設定のある教科は除く） */
+    avoidSameDayDuplicate: boolean;
+    /** 担任の空きコマ（最終限の授業準備時間）を確保する */
+    ensureHomeroomPrep: boolean;
+    /** 試行時間の上限（ミリ秒） */
+    timeBudgetMs: number;
 }
 
-function calculateFillScore(schedule: any, classes: ClassGroup[]): number {
-    let count = 0;
-    classes.forEach(cls => {
-        Object.values(schedule[cls.id] || {}).forEach((day: any) => {
-            Object.values(day).forEach((cell: any) => {
-                if (cell.subjectId) count++;
-            });
-        });
-    });
-    return count;
+export const DEFAULT_GENERATION_OPTIONS: GenerationOptions = {
+    peConcurrencyLimit: 1,
+    avoidSameDayDuplicate: true,
+    ensureHomeroomPrep: true,
+    timeBudgetMs: 3000,
+};
+
+export interface UnplacedReason {
+    reason: string;
+    count: number;
 }
 
-function runSingleGenerationAttempt(data: TimetableData): any {
-    const { classes, teachers, subjects, schedule } = data;
-    const newSchedule = JSON.parse(JSON.stringify(schedule));
+export interface UnplacedItem {
+    classId: string;
+    subjectId: string;
+    remaining: number;
+    reasons: UnplacedReason[];
+}
 
-    // --- Phase 0: Cleanup invalid existing assignments (e.g. conflicting with meetings) ---
-    // (この関数内で定義される isTeacherAvailableBase を使用するため、定義の後に移動するか、
-    // ここでインラインでチェックを行います。今回は定義を前に持ってくるか検討しましたが、
-    // シンプルに counts 算出の前に「現在の schedule 自体」を不整合チェックして書き換えます。)
-    classes.forEach(cls => {
-        if (!newSchedule[cls.id]) return;
-        Object.keys(newSchedule[cls.id]).forEach((dayStr) => {
-            const day = dayStr as Weekday;
-            Object.keys(newSchedule[cls.id][day]).forEach((periodStr) => {
-                const period = parseInt(periodStr);
-                const cell = newSchedule[cls.id][day][period];
-                if (!cell || !cell.subjectId) return;
+export interface GenerationReport {
+    /** 配置対象だったコマ数（既存配置を除く不足分） */
+    totalTarget: number;
+    /** 今回配置できたコマ数 */
+    totalPlaced: number;
+    /** 配置できなかったコマの内訳と理由 */
+    unplaced: UnplacedItem[];
+    attempts: number;
+    elapsedMs: number;
+}
 
-                const tIds = cell.teacherIds || (cell.teacherId ? [cell.teacherId] : []);
-                // 会議・不可時間の再チェック
-                const isInvalid = tIds.some((tId: string) => {
-                    const t = teachers.find(x => x.id === tId);
-                    if (!t) return false;
-                    const inMeeting = t.meetingIds?.some((mid: string) =>
-                        data.meetings.some(m => m.id === mid && m.slots.some(s => s.day === day && s.period === period))
-                    );
-                    const isUnavailable = t.unavailable.some(s => s.day === day && s.period === period);
-                    return inMeeting || isUnavailable;
-                });
+// ================= 内部構造 =================
 
-                if (isInvalid) {
-                    delete newSchedule[cls.id][day][period];
-                }
-            });
+type SlotKey = string;
+const slotKey = (day: Weekday, period: number): SlotKey => `${day}:${period}`;
+
+interface Need {
+    subjectId: string;
+    name: string;
+    count: number;
+    teacherIds: string[];
+    partnerCount: number;
+}
+
+interface GenContext {
+    data: TimetableData;
+    options: GenerationOptions;
+    days: DayConfig[];
+    allSlots: WeeklySlot[];
+    subjectById: Map<string, Subject>;
+    teacherById: Map<string, Teacher>;
+    classById: Map<string, ClassGroup>;
+    /** 教員ごとの「授業に使えない」コマ（不可時間 + 会議） */
+    teacherBlocked: Map<string, Set<SlotKey>>;
+    /** `${subjectId}|${classId}` -> 同じ時間にそろえるべき学級（合同・交流・複式） */
+    partnersCache: Map<string, string[]>;
+    /** `${classId}|${subjectId}` -> 担当教員ID */
+    needTeachers: Map<string, string[]>;
+    isPe: (subjectId: string | undefined) => boolean;
+}
+
+interface AttemptState {
+    schedule: Record<string, Record<Weekday, Record<number, ScheduleCell>>>;
+    teacherBusy: Map<SlotKey, Set<string>>;
+    peCount: Map<SlotKey, number>;
+    needs: Map<string, Need[]>; // classId -> 残り必要数
+}
+
+const isPeName = (name?: string) => name === "体育" || name === "保体";
+
+// ================= コンテキスト構築（1回だけ） =================
+
+function buildContext(data: TimetableData, options: GenerationOptions): GenContext {
+    const days = getDays(data);
+    const allSlots: WeeklySlot[] = days.flatMap((d) =>
+        Array.from({ length: d.periods }, (_, i) => ({ day: d.key, period: i + 1 }))
+    );
+    const subjectById = new Map(data.subjects.map((s) => [s.id, s]));
+    const teacherById = new Map(data.teachers.map((t) => [t.id, t]));
+    const classById = new Map(data.classes.map((c) => [c.id, c]));
+
+    // 教員の不可時間 + 会議参加コマ
+    const teacherBlocked = new Map<string, Set<SlotKey>>();
+    data.teachers.forEach((t) => {
+        const blocked = new Set<SlotKey>();
+        t.unavailable.forEach((s) => blocked.add(slotKey(s.day, s.period)));
+        (t.meetingIds ?? []).forEach((mid) => {
+            const meeting = data.meetings.find((m) => m.id === mid);
+            meeting?.slots.forEach((s) => blocked.add(slotKey(s.day, s.period)));
         });
+        teacherBlocked.set(t.id, blocked);
     });
 
-    // 必要時数の算出
-    const classNeeds: Record<string, { subjectId: string; count: number; teacherIds: string[]; isJoint: boolean; name: string }[]> = {};
-    classes.forEach(cls => {
-        classNeeds[cls.id] = subjects.map(sub => {
-            const quota = getEffectiveQuota(sub, cls.grade, cls.type || "normal", cls.specialType);
-            let currentCount = 0;
-            Object.values(newSchedule[cls.id] || {}).forEach((day: any) => {
-                Object.values(day).forEach((cell: any) => {
-                    if (cell.subjectId === sub.id) currentCount++;
-                });
-            });
-            const remaining = Math.max(0, Math.ceil(quota) - currentCount);
-
-            let assignedTeacherIds: string[] = [];
-            if (sub.name === "道徳" || sub.name === "学活") {
-                const hr = teachers.find(t => t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id));
-                if (hr) assignedTeacherIds.push(hr.id);
-            } else if (sub.name === "総合") {
-                const eligible = teachers.filter(t => t.taughtGrades?.includes(cls.grade) || (t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id)));
-                assignedTeacherIds = eligible.map(e => e.id);
-            } else if (sub.name === "自立" || sub.name === "生活") {
-                const hr = teachers.find(t => t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id));
-                if (hr) assignedTeacherIds.push(hr.id);
-            } else {
-                assignedTeacherIds = teachers
-                    .filter(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id)))
-                    .map(t => t.id);
-            }
-            return { subjectId: sub.id, name: sub.name, count: remaining, teacherIds: assignedTeacherIds, isJoint: !!sub.isJointSubject };
-        }).filter(n => n.count > 0);
-    });
-
-    // 連動情報の整理
-    const jointGroupsLookup: any = {};
-    const multiGradeLookup: any = {};
-    const exchangeLookup: any = {};
-    const teacherJointLookup: any = {}; // 同じ教科・同じ担当教員による自動合同
-
-    subjects.forEach(sub => {
-        // --- 1. 明示的な合同設定 ---
-        if (sub.isJointSubject && sub.jointClassGroups) {
-            jointGroupsLookup[sub.id] = {};
-            Object.entries(sub.jointClassGroups).forEach(([gStr, groups]) => {
-                jointGroupsLookup[sub.id][gStr] = {};
-                groups.forEach(group => group.forEach(cid => {
-                    jointGroupsLookup[sub.id][gStr][cid] = group.filter(v => v !== cid);
-                }));
-            });
-        }
-
-        // --- 2. 複式学級設定 ---
-        if (sub.isMultiGrade && sub.multiGradeGroups) {
-            multiGradeLookup[sub.id] = {};
-            sub.multiGradeGroups.forEach(group => group.forEach(cid => {
-                multiGradeLookup[sub.id][cid] = group.filter(v => v !== cid);
-            }));
-        }
-
-        // --- 3. 交流学級設定 (特別支援 ⇔ 通常) ---
-        exchangeLookup[sub.id] = {};
-        classes.forEach(cls => {
-            if (cls.type === "special" && cls.exchangeClassId) {
-                const subIsEx = (cls.specialType === "intellectual" && sub.intellectualExchange?.[cls.grade]) ||
-                    (cls.specialType === "emotional" && sub.emotionalExchange?.[cls.grade]) ||
-                    (cls.specialType === "physical" && sub.physicalExchange?.[cls.grade]) ||
-                    (sub.specialGradeExchange?.[cls.grade]);
-                if (subIsEx) {
-                    const regId = cls.exchangeClassId;
-                    if (!exchangeLookup[sub.id][cls.id]) exchangeLookup[sub.id][cls.id] = [];
-                    if (!exchangeLookup[sub.id][regId]) exchangeLookup[sub.id][regId] = [];
-                    // 双方向に追加
-                    if (!exchangeLookup[sub.id][cls.id].includes(regId)) exchangeLookup[sub.id][cls.id].push(regId);
-                    if (!exchangeLookup[sub.id][regId].includes(cls.id)) exchangeLookup[sub.id][regId].push(cls.id);
-                }
-            }
-        });
-
-        // --- 4. 教員設定に基づく自動合同判定 (廃止) ---
-        // ユーザーからの要望により、自動的な教員判定による合同グループ化は行いません。
-        // 合同設定は設定画面での「合同」設定、または「特別支援交流」設定に厳密に従います。
-    });
-
-    // 芋づる式にすべてのパートナーを取得する関数
-    const getPartners = (subId: string, grade: number, clsId: string): string[] => {
+    // 連動学級（合同・交流・複式）の直接パートナー
+    const directPartners = (subjectId: string, classId: string): string[] => {
         const result = new Set<string>();
-        const queue = [clsId];
-        const visited = new Set<string>([clsId]);
-        const gradeStr = grade.toString();
-
-        while (queue.length > 0) {
-            const currentId = queue.shift()!;
-
-            const partners = [
-                ...(jointGroupsLookup[subId]?.[gradeStr]?.[currentId] || []),
-                ...(multiGradeLookup[subId]?.[currentId] || []),
-                ...(exchangeLookup[subId]?.[currentId] || [])
-            ];
-
-            for (const p of partners) {
-                if (!visited.has(p)) {
-                    visited.add(p);
-                    result.add(p);
-                    queue.push(p);
+        const cls = classById.get(classId);
+        data.jointRules
+            .filter((r) => r.subjectId === subjectId && r.grade === cls?.grade)
+            .forEach((r) =>
+                r.classGroups.forEach((group) => {
+                    if (group.includes(classId)) {
+                        group.forEach((id) => id !== classId && result.add(id));
+                    }
+                })
+            );
+        data.exchangeRules
+            .filter((r) => r.subjectIds.includes(subjectId))
+            .forEach((r) => {
+                if (r.specialClassId === classId) result.add(r.exchangeClassId);
+                if (r.exchangeClassId === classId) result.add(r.specialClassId);
+            });
+        const sub = subjectById.get(subjectId);
+        if (sub?.isMultiGrade && sub.multiGradeGroups) {
+            sub.multiGradeGroups.forEach((group) => {
+                if (group.includes(classId)) {
+                    group.forEach((id) => id !== classId && result.add(id));
                 }
-            }
+            });
         }
         return Array.from(result);
     };
 
-    // ヘルパー：学校全体の特定スロットでの特定教科（体育など）の使用をチェック
-    const isSubjectInSlotSchoolWide = (subName: string, day: Weekday, period: number, currentSchedule: any): boolean => {
-        for (const cid of Object.keys(currentSchedule)) {
-            const cell = currentSchedule[cid][day]?.[period];
-            if (!cell?.subjectId) continue;
-            const sub = subjects.find(s => s.id === cell.subjectId);
-            if (sub?.name === subName) return true;
+    // 芋づる式にすべてのパートナーを取得（キャッシュ付き）
+    const partnersCache = new Map<string, string[]>();
+    const getPartners = (subjectId: string, classId: string): string[] => {
+        const key = `${subjectId}|${classId}`;
+        const cached = partnersCache.get(key);
+        if (cached) return cached;
+        const visited = new Set<string>([classId]);
+        const queue = [classId];
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            directPartners(subjectId, current).forEach((p) => {
+                if (!visited.has(p)) {
+                    visited.add(p);
+                    queue.push(p);
+                }
+            });
         }
-        return false;
+        visited.delete(classId);
+        const result = Array.from(visited);
+        partnersCache.set(key, result);
+        return result;
     };
+    // すべての組み合わせを事前計算
+    data.subjects.forEach((sub) =>
+        data.classes.forEach((cls) => getPartners(sub.id, cls.id))
+    );
 
-    // ヘルパー：先生がその時間に空いているか（会議・不可時間のみチェック）
-    const isTeacherAvailableBase = (tIds: string[], day: Weekday, period: number): boolean => {
-        return tIds.every(tId => {
-            const t = teachers.find(x => x.id === tId);
-            if (!t) return true;
-            if (t.meetingIds && t.meetingIds.length > 0) {
-                if (data.meetings.some(m => t.meetingIds?.includes(m.id) && m.slots.some(s => s.day === day && s.period === period))) return false;
+    // 担当教員の決定（スケジュールに依存しないため事前計算できる）
+    const isHomeroomForClass = (teacher: Teacher, cls: ClassGroup) =>
+        teacher.id === cls.homeroomTeacherId ||
+        (teacher.role === "homeroom" && !!teacher.homeroomClassIds?.includes(cls.id));
+
+    const isExchangeSubjectForClass = (sub: Subject, cls: ClassGroup) =>
+        cls.type === "special" &&
+        data.exchangeRules.some(
+            (r) => r.specialClassId === cls.id && r.subjectIds.includes(sub.id)
+        );
+
+    const needTeachers = new Map<string, string[]>();
+    data.classes.forEach((cls) => {
+        data.subjects.forEach((sub) => {
+            let teacherIds: string[] = [];
+            if (sub.name === "道徳" || sub.name === "学活" || sub.name === "自立" || sub.name === "生活") {
+                const hr = data.teachers.find((t) => isHomeroomForClass(t, cls));
+                if (hr) teacherIds = [hr.id];
+            } else if (sub.name === "総合" || sub.name === "総合的な学習") {
+                teacherIds = data.teachers
+                    .filter((t) => t.taughtGrades?.includes(cls.grade) || isHomeroomForClass(t, cls))
+                    .map((t) => t.id);
+            } else {
+                const assigned = data.teachers.filter((t) =>
+                    t.subjectAssignments?.some(
+                        (a) => a.subjectName === sub.name && a.classIds.includes(cls.id)
+                    )
+                );
+                if (assigned.length > 0) {
+                    teacherIds = assigned.map((t) => t.id);
+                } else if (!isExchangeSubjectForClass(sub, cls)) {
+                    // 交流教科でなければ、教科担当者全員を候補にする
+                    teacherIds = data.teachers
+                        .filter((t) => t.subjects.includes(sub.name))
+                        .map((t) => t.id);
+                }
+                // 交流教科で担当割当が無い場合は空（交流先の教員が担当する）
             }
-            if (t.unavailable.some(s => s.day === day && s.period === period)) return false;
-            return true;
+            needTeachers.set(`${cls.id}|${sub.id}`, teacherIds);
         });
-    };
+    });
 
-    const checkTeacherFree = (tIds: string[], day: Weekday, period: number, currentSchedule: any): boolean => {
-        if (!isTeacherAvailableBase(tIds, day, period)) return false;
-        for (const tId of tIds) {
-            for (const cId of Object.keys(currentSchedule)) {
-                const cell = currentSchedule[cId][day]?.[period];
-                if (cell?.teacherIds?.includes(tId) || cell?.teacherId === tId) return false;
+    return {
+        data,
+        options,
+        days,
+        allSlots,
+        subjectById,
+        teacherById,
+        classById,
+        teacherBlocked,
+        partnersCache,
+        needTeachers,
+        isPe: (subjectId) => isPeName(subjectById.get(subjectId ?? "")?.name),
+    };
+}
+
+const partnersOf = (ctx: GenContext, subjectId: string, classId: string): string[] =>
+    ctx.partnersCache.get(`${subjectId}|${classId}`) ?? [];
+
+// ================= 試行状態の構築 =================
+
+const cellTeacherIds = (cell?: ScheduleCell): string[] =>
+    cell?.teacherIds && cell.teacherIds.length > 0
+        ? cell.teacherIds
+        : cell?.teacherId
+            ? [cell.teacherId]
+            : [];
+
+function buildAttemptState(ctx: GenContext): AttemptState {
+    const { data } = ctx;
+    // 既存スケジュールをコピー（曜日構成に合わせた空週をベースにする）
+    const schedule: AttemptState["schedule"] = {};
+    data.classes.forEach((cls) => {
+        const week: Record<Weekday, Record<number, ScheduleCell>> = {} as any;
+        ctx.days.forEach((day) => {
+            week[day.key] = {};
+            for (let p = 1; p <= day.periods; p += 1) {
+                const cell = data.schedule[cls.id]?.[day.key]?.[p];
+                week[day.key][p] = cell ? { ...cell } : {};
+            }
+        });
+        schedule[cls.id] = week;
+    });
+
+    // 既存配置のうち、教員の不可時間・会議と重なるものは外す
+    data.classes.forEach((cls) => {
+        ctx.allSlots.forEach((slot) => {
+            const cell = schedule[cls.id][slot.day][slot.period];
+            if (!cell.subjectId) return;
+            const invalid = cellTeacherIds(cell).some((tId) =>
+                ctx.teacherBlocked.get(tId)?.has(slotKey(slot.day, slot.period))
+            );
+            if (invalid) schedule[cls.id][slot.day][slot.period] = {};
+        });
+    });
+
+    // 教員の使用状況インデックス
+    const teacherBusy = new Map<SlotKey, Set<string>>();
+    // 保体の同時実施グループ数インデックス
+    const peCount = new Map<SlotKey, number>();
+
+    ctx.allSlots.forEach((slot) => {
+        const key = slotKey(slot.day, slot.period);
+        const busy = new Set<string>();
+        const peClasses: { classId: string; subjectId: string }[] = [];
+        data.classes.forEach((cls) => {
+            const cell = schedule[cls.id][slot.day][slot.period];
+            if (!cell.subjectId) return;
+            cellTeacherIds(cell).forEach((tId) => busy.add(tId));
+            if (ctx.isPe(cell.subjectId)) {
+                peClasses.push({ classId: cls.id, subjectId: cell.subjectId });
+            }
+        });
+        teacherBusy.set(key, busy);
+        // 既存の保体配置を「連動グループ単位」で数える
+        const visited = new Set<string>();
+        let groups = 0;
+        peClasses.forEach((entry) => {
+            if (visited.has(entry.classId)) return;
+            groups += 1;
+            visited.add(entry.classId);
+            const queue = [entry.classId];
+            while (queue.length > 0) {
+                const current = queue.shift()!;
+                partnersOf(ctx, entry.subjectId, current).forEach((p) => {
+                    if (!visited.has(p) && peClasses.some((x) => x.classId === p)) {
+                        visited.add(p);
+                        queue.push(p);
+                    }
+                });
+            }
+        });
+        peCount.set(key, groups);
+    });
+
+    // 残り必要コマ数
+    const needs = new Map<string, Need[]>();
+    data.classes.forEach((cls) => {
+        const list: Need[] = [];
+        data.subjects.forEach((sub) => {
+            const quota = getEffectiveQuota(sub, cls.grade, cls.type || "normal", cls.specialType);
+            const target = Math.ceil(quota);
+            if (target <= 0) return;
+            let placed = 0;
+            ctx.allSlots.forEach((slot) => {
+                if (schedule[cls.id][slot.day][slot.period].subjectId === sub.id) placed += 1;
+            });
+            const remaining = Math.max(0, target - placed);
+            if (remaining <= 0) return;
+            list.push({
+                subjectId: sub.id,
+                name: sub.name,
+                count: remaining,
+                teacherIds: ctx.needTeachers.get(`${cls.id}|${sub.id}`) ?? [],
+                partnerCount: partnersOf(ctx, sub.id, cls.id).length,
+            });
+        });
+        // 連動が多い教科 → 残り数が多い教科 の順に優先
+        list.sort((a, b) =>
+            a.partnerCount !== b.partnerCount ? b.partnerCount - a.partnerCount : b.count - a.count
+        );
+        needs.set(cls.id, list);
+    });
+
+    return { schedule, teacherBusy, peCount, needs };
+}
+
+// ================= 配置判定 =================
+
+/**
+ * 配置できない場合はその理由（日本語）を返し、配置できる場合は null を返す。
+ * 生成ループと「配置できなかった理由」の分析で同じ判定を共有する。
+ */
+function placementBlocker(
+    ctx: GenContext,
+    state: AttemptState,
+    cls: ClassGroup,
+    need: Need,
+    slot: WeeklySlot
+): string | null {
+    const key = slotKey(slot.day, slot.period);
+    const { schedule } = state;
+
+    if (schedule[cls.id][slot.day][slot.period].subjectId) return "空きコマがない";
+
+    const subject = ctx.subjectById.get(need.subjectId);
+    const canDouble = !!subject?.allowDoubleInDay ||
+        need.teacherIds.some((tId) => ctx.teacherById.get(tId)?.allowDoubleSubject);
+    if (ctx.options.avoidSameDayDuplicate && !canDouble) {
+        const dayCells = schedule[cls.id][slot.day];
+        for (const p of Object.keys(dayCells)) {
+            if (dayCells[Number(p)].subjectId === need.subjectId) {
+                return "同じ教科が同日に配置済み";
             }
         }
-        return true;
-    };
+    }
 
-    const hasPrepPeriod = (tId: string, day: Weekday, currentSchedule: any, exceptSlot?: { period: number }): boolean => {
-        const dayConfig = DAY_CONFIGS.find(d => d.key === day);
-        if (!dayConfig) return true;
-        for (let p = 1; p <= dayConfig.periods; p++) {
-            if (exceptSlot && exceptSlot.period === p) continue;
-            const t = teachers.find(x => x.id === tId);
-            if (t?.meetingIds?.some(mid => data.meetings.find(m => m.id === mid)?.slots.some(s => s.day === day && s.period === p))) continue;
-            if (t?.unavailable.some(s => s.day === day && s.period === p)) continue;
-            let inClass = false;
-            for (const cId of Object.keys(currentSchedule)) {
-                if (currentSchedule[cId][day]?.[p]?.teacherIds?.includes(tId) || currentSchedule[cId][day]?.[p]?.teacherId === tId) {
-                    inClass = true; break;
+    if (ctx.isPe(need.subjectId) && (state.peCount.get(key) ?? 0) >= ctx.options.peConcurrencyLimit) {
+        return "保体の同時実施数の上限";
+    }
+
+    // 連動学級（合同・交流）の状態確認
+    const partners = partnersOf(ctx, need.subjectId, cls.id);
+    const allTeachers = new Set(need.teacherIds);
+    for (const pId of partners) {
+        const pNeed = state.needs.get(pId)?.find((n) => n.subjectId === need.subjectId);
+        if (!pNeed || pNeed.count <= 0) return "合同・交流先の学級の時数が既に満ちている";
+        if (schedule[pId][slot.day]?.[slot.period]?.subjectId) {
+            return "合同・交流先の学級に空きがない";
+        }
+        if (ctx.options.avoidSameDayDuplicate) {
+            const pCanDouble = !!ctx.subjectById.get(need.subjectId)?.allowDoubleInDay ||
+                pNeed.teacherIds.some((tId) => ctx.teacherById.get(tId)?.allowDoubleSubject);
+            if (!pCanDouble) {
+                const dayCells = schedule[pId][slot.day];
+                for (const p of Object.keys(dayCells)) {
+                    if (dayCells[Number(p)].subjectId === need.subjectId) {
+                        return "合同・交流先で同じ教科が同日に配置済み";
+                    }
                 }
             }
-            if (!inClass) return true;
         }
-        return false;
-    };
+        pNeed.teacherIds.forEach((tId) => allTeachers.add(tId));
+    }
 
-    // 1. 固定配置 (Fixed Slots)
-    subjects.forEach(sub => {
+    if (allTeachers.size === 0 && partners.length === 0) {
+        return "担当教員が設定されていない";
+    }
+
+    // 教員の空き確認（インデックス参照なので高速）
+    const busy = state.teacherBusy.get(key)!;
+    for (const tId of allTeachers) {
+        if (ctx.teacherBlocked.get(tId)?.has(key)) return "教員の不可時間・会議と重複";
+        if (busy.has(tId)) return "教員が他の授業と重複";
+    }
+
+    // 担任の空きコマ（最終限）確保
+    if (ctx.options.ensureHomeroomPrep) {
+        const dayConfig = ctx.days.find((d) => d.key === slot.day)!;
+        if (slot.period === dayConfig.periods) {
+            for (const tId of allTeachers) {
+                const t = ctx.teacherById.get(tId);
+                if (t?.role !== "homeroom") continue;
+                let hasFree = false;
+                for (let p = 1; p <= dayConfig.periods; p += 1) {
+                    if (p === slot.period) continue;
+                    const k = slotKey(slot.day, p);
+                    if (ctx.teacherBlocked.get(tId)?.has(k)) continue;
+                    if (!state.teacherBusy.get(k)?.has(tId)) {
+                        hasFree = true;
+                        break;
+                    }
+                }
+                if (!hasFree) return "担任の空き時間確保の制約";
+            }
+        }
+    }
+
+    return null;
+}
+
+/** 配置を実行し、インデックスと残り時数を更新する */
+function commitPlacement(
+    ctx: GenContext,
+    state: AttemptState,
+    cls: ClassGroup,
+    need: Need,
+    slot: WeeklySlot
+) {
+    const key = slotKey(slot.day, slot.period);
+    const partners = partnersOf(ctx, need.subjectId, cls.id);
+    const allTeachers = new Set(need.teacherIds);
+    partners.forEach((pId) => {
+        state.needs.get(pId)?.find((n) => n.subjectId === need.subjectId)
+            ?.teacherIds.forEach((tId) => allTeachers.add(tId));
+    });
+    const teacherIds = Array.from(allTeachers);
+
+    [cls.id, ...partners].forEach((cId) => {
+        state.schedule[cId][slot.day][slot.period] = {
+            subjectId: need.subjectId,
+            teacherIds,
+            teacherId: teacherIds[0],
+        };
+        const n = state.needs.get(cId)?.find((x) => x.subjectId === need.subjectId);
+        if (n) n.count -= 1;
+    });
+
+    const busy = state.teacherBusy.get(key)!;
+    teacherIds.forEach((tId) => busy.add(tId));
+    if (ctx.isPe(need.subjectId)) {
+        state.peCount.set(key, (state.peCount.get(key) ?? 0) + 1);
+    }
+}
+
+// ================= 1回の試行 =================
+
+const shuffle = <T,>(arr: T[]): T[] => {
+    const result = [...arr];
+    for (let i = result.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+};
+
+function runAttempt(ctx: GenContext): AttemptState {
+    const state = buildAttemptState(ctx);
+    const { data } = ctx;
+
+    // --- 0. 固定授業の配置（最優先） ---
+    data.subjects.forEach((sub) => {
         if (!sub.fixedSlots) return;
         Object.entries(sub.fixedSlots).forEach(([targetKey, slots]) => {
-            let targetClasses = /^\d+$/.test(targetKey) ? classes.filter(c => c.grade === parseInt(targetKey)) : classes.filter(c => c.id === targetKey);
-            slots.forEach(slot => {
-                targetClasses.forEach(cls => {
-                    const need = classNeeds[cls.id]?.find(n => n.subjectId === sub.id);
-                    if (!need || need.count <= 0 || newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
-
-                    // 体育の重複チェック（固定でもチェックするが、固定の自身を誤判定しないように注意。
-                    // ここでは単独の配置を進めるループなので、現在の slot に体育があればスキップ）
-                    if (sub.name === "体育" && isSubjectInSlotSchoolWide("体育", slot.day, slot.period, newSchedule)) return;
-
-                    const partners = getPartners(sub.id, cls.grade, cls.id);
-                    const allTeachers = new Set(need.teacherIds);
-                    partners.forEach(pId => classNeeds[pId]?.find(n => n.subjectId === sub.id)?.teacherIds.forEach(t => allTeachers.add(t)));
-                    const tToAssign = Array.from(allTeachers);
-
-                    if (partners.some(p => newSchedule[p]?.[slot.day]?.[slot.period]?.subjectId) || !checkTeacherFree(tToAssign, slot.day, slot.period, newSchedule)) return;
-
-                    [cls.id, ...partners].forEach(cId => {
-                        if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
-                        newSchedule[cId][slot.day][slot.period] = { subjectId: sub.id, teacherIds: tToAssign, teacherId: tToAssign[0] };
-                        const cNeed = classNeeds[cId]?.find(n => n.subjectId === sub.id);
-                        if (cNeed) cNeed.count--;
-                    });
+            const targetClasses = /^\d+$/.test(targetKey)
+                ? data.classes.filter((c) => c.grade === parseInt(targetKey, 10))
+                : data.classes.filter((c) => c.id === targetKey);
+            slots.forEach((slot) => {
+                targetClasses.forEach((cls) => {
+                    const need = state.needs.get(cls.id)?.find((n) => n.subjectId === sub.id);
+                    if (!need || need.count <= 0) return;
+                    if (!placementBlocker(ctx, state, cls, need, slot)) {
+                        commitPlacement(ctx, state, cls, need, slot);
+                    }
                 });
             });
         });
     });
 
-    // 2. 教科プールのソート
-    classes.forEach(cls => {
-        classNeeds[cls.id].sort((a, b) => {
-            const pA = getPartners(a.subjectId, cls.grade, cls.id).length;
-            const pB = getPartners(b.subjectId, cls.grade, cls.id).length;
-            if (pA !== pB) return pB - pA;
-            return b.count - a.count;
-        });
-    });
+    const shuffledSlots = shuffle(ctx.allSlots);
+    const shuffledClasses = shuffle(data.classes);
 
-    // 3. メイン配置ループ
-    const allSlots = DAY_CONFIGS.flatMap(d => Array.from({ length: d.periods }, (_, i) => ({ day: d.key as Weekday, period: i + 1 })));
-    const shuffledSlots = [...allSlots].sort(() => Math.random() - 0.5);
-    const shuffledClasses = [...classes].sort(() => Math.random() - 0.5);
-
-    const attemptSlot = (slot: { day: Weekday, period: number }, cls: ClassGroup, filter: (cand: any) => boolean) => {
-        if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) return;
-
-        const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
-        const candidates = classNeeds[cls.id].filter(n => {
-            if (n.count <= 0 || !filter(n)) return false;
-            const canDouble = n.teacherIds.some(tId => teachers.find(tx => tx.id === tId)?.allowDoubleSubject);
-            return canDouble || !subjToday.includes(n.subjectId);
-        });
-
-        for (const candidate of candidates) {
-            const partners = getPartners(candidate.subjectId, cls.grade, cls.id);
-
-            // --- ルール：体育は学校全体で1コマに1グループ ---
-            if (candidate.name === "体育" && isSubjectInSlotSchoolWide("体育", slot.day, slot.period, newSchedule)) continue;
-
-            const validPartners = partners.filter(pId => {
-                const pNeed = classNeeds[pId]?.find(n => n.subjectId === candidate.subjectId);
-                if (!pNeed || pNeed.count <= 0) return false;
-
-                const isFree = !newSchedule[pId]?.[slot.day]?.[slot.period]?.subjectId;
-                const canDouble = pNeed.teacherIds.some(tId => teachers.find(tx => tx.id === tId)?.allowDoubleSubject);
-                const notToday = canDouble || !Object.values(newSchedule[pId][slot.day] || {}).some((c: any) => c.subjectId === candidate.subjectId);
-
-                return isFree && notToday;
-            });
-
-            if (partners.length > 0 && validPartners.length !== partners.length) continue;
-
-            const allTeachers = new Set(candidate.teacherIds);
-            validPartners.forEach(pId => classNeeds[pId]?.find(n => n.subjectId === candidate.subjectId)?.teacherIds.forEach(t => allTeachers.add(t)));
-            const tToAssign = Array.from(allTeachers);
-            if (!checkTeacherFree(tToAssign, slot.day, slot.period, newSchedule)) continue;
-
-            let hrViolation = false;
-            for (const tId of tToAssign) {
-                const t = teachers.find(x => x.id === tId);
-                if (t?.role === "homeroom" && slot.period === DAY_CONFIGS.find(d => d.key === slot.day)?.periods) {
-                    if (!hasPrepPeriod(tId, slot.day, newSchedule, slot)) { hrViolation = true; break; }
-                }
-            }
-            if (hrViolation) continue;
-
-            [cls.id, ...validPartners].forEach(cId => {
-                if (!newSchedule[cId][slot.day]) newSchedule[cId][slot.day] = {};
-                newSchedule[cId][slot.day][slot.period] = { subjectId: candidate.subjectId, teacherIds: tToAssign, teacherId: tToAssign[0] };
-                const n = classNeeds[cId]?.find(x => x.subjectId === candidate.subjectId);
-                if (n) n.count--;
-            });
-            return;
-        }
-    };
-
-    // --- Phase 1: 体育 (優先度：1) ---
-    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, (n) => n.name === "体育")));
-
-    // --- Phase 2: 特別支援学級の交流授業 (優先度：2) ---
-    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, (n) => {
-        if (n.name === "体育") return false;
-        const partners = getPartners(n.subjectId, c.grade, c.id);
-        const hasExchange = partners.some(pId => {
-            const pCls = classes.find(x => x.id === pId);
-            return (c.type === "special" && pCls?.type === "normal") || (c.type === "normal" && pCls?.type === "special");
-        });
-        return hasExchange;
-    })));
-
-    // --- Phase 3: その他の授業 (優先度：3) ---
-    shuffledSlots.forEach(s => shuffledClasses.forEach(c => attemptSlot(s, c, (n) => true)));
-
-    // 4. 高度なスワップ（入れ替え）
-    let advancedSwapCount = 0;
-    const MAX_ADVANCED_SWAPS = 30;
-    for (const cls of classes) {
-        for (const slot of allSlots) {
-            if (newSchedule[cls.id]?.[slot.day]?.[slot.period]?.subjectId) continue;
-            if (advancedSwapCount >= MAX_ADVANCED_SWAPS) break;
-
-            const subjToday = Object.values(newSchedule[cls.id][slot.day] || {}).map((c: any) => c.subjectId);
-            const needed = classNeeds[cls.id].find(n => {
-                const canDouble = n.teacherIds.some(tId => teachers.find(tx => tx.id === tId)?.allowDoubleSubject);
-                return n.count > 0 && (canDouble || !subjToday.includes(n.subjectId));
-            });
-            if (!needed) continue;
-
-            // 体育制限のために邪魔されているか
-            if (needed.name === "体育" && isSubjectInSlotSchoolWide("体育", slot.day, slot.period, newSchedule)) {
-                // その時間に体育をしている他クラスを移動させる
-                for (const oCid of Object.keys(newSchedule)) {
-                    const oCell = newSchedule[oCid][slot.day]?.[slot.period];
-                    if (!oCell?.subjectId) continue;
-                    const oSub = subjects.find(s => s.id === oCell.subjectId);
-                    if (oSub?.name === "体育") {
-                        const moveSlots = allSlots.filter(s => !newSchedule[oCid][s.day]?.[s.period]?.subjectId && !Object.values(newSchedule[oCid][s.day] || {}).some((cx: any) => cx.subjectId === oCell.subjectId));
-                        if (moveSlots.length > 0) {
-                            const mv = moveSlots[0];
-                            if (!newSchedule[oCid][mv.day]) newSchedule[oCid][mv.day] = {};
-                            newSchedule[oCid][mv.day][mv.period] = { ...oCell };
-                            delete newSchedule[oCid][slot.day][slot.period];
-                            advancedSwapCount++;
-                            break;
-                        }
+    const attemptFill = (filter: (need: Need, cls: ClassGroup) => boolean) => {
+        shuffledSlots.forEach((slot) => {
+            shuffledClasses.forEach((cls) => {
+                if (state.schedule[cls.id][slot.day][slot.period].subjectId) return;
+                const candidates = state.needs.get(cls.id) ?? [];
+                for (const need of candidates) {
+                    if (need.count <= 0 || !filter(need, cls)) continue;
+                    if (!placementBlocker(ctx, state, cls, need, slot)) {
+                        commitPlacement(ctx, state, cls, need, slot);
+                        return;
                     }
                 }
-            }
+            });
+        });
+    };
+
+    // --- 1. 保体（体育館の制約が最も厳しい） ---
+    attemptFill((need) => isPeName(need.name));
+    // --- 2. 合同・交流など連動のある教科 ---
+    attemptFill((need) => need.partnerCount > 0);
+    // --- 3. その他すべて ---
+    attemptFill(() => true);
+
+    return state;
+}
+
+const countPlacedCells = (schedule: AttemptState["schedule"]): number => {
+    let count = 0;
+    Object.values(schedule).forEach((week) => {
+        Object.values(week).forEach((day) => {
+            Object.values(day).forEach((cell) => {
+                if (cell.subjectId) count += 1;
+            });
+        });
+    });
+    return count;
+};
+
+// ================= 配置できなかった理由の分析 =================
+
+function analyzeUnplaced(ctx: GenContext, best: AttemptState): UnplacedItem[] {
+    const items: UnplacedItem[] = [];
+    best.needs.forEach((needList, classId) => {
+        const cls = ctx.classById.get(classId);
+        if (!cls) return;
+        needList.forEach((need) => {
+            if (need.count <= 0) return;
+            const reasonCounts = new Map<string, number>();
+            ctx.allSlots.forEach((slot) => {
+                const reason = placementBlocker(ctx, best, cls, need, slot);
+                if (reason) {
+                    reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+                }
+            });
+            const reasons = Array.from(reasonCounts.entries())
+                .map(([reason, count]) => ({ reason, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 3);
+            items.push({
+                classId,
+                subjectId: need.subjectId,
+                remaining: need.count,
+                reasons,
+            });
+        });
+    });
+    return items.sort((a, b) => b.remaining - a.remaining);
+}
+
+// ================= エントリポイント =================
+
+export function generateAutoTimetable(
+    data: TimetableData,
+    options: GenerationOptions = DEFAULT_GENERATION_OPTIONS
+): { data: TimetableData; report: GenerationReport } {
+    const started = Date.now();
+    const ctx = buildContext(data, options);
+
+    // 配置対象コマ数（試行前の不足分）
+    const initial = buildAttemptState(ctx);
+    let totalTarget = 0;
+    initial.needs.forEach((list) => list.forEach((n) => (totalTarget += n.count)));
+
+    let best: AttemptState | null = null;
+    let bestRemaining = Infinity;
+    let attempts = 0;
+    const hardCap = 300;
+
+    while (attempts < hardCap && Date.now() - started < options.timeBudgetMs) {
+        attempts += 1;
+        const state = runAttempt(ctx);
+        let remaining = 0;
+        state.needs.forEach((list) => list.forEach((n) => (remaining += n.count)));
+        if (remaining < bestRemaining) {
+            bestRemaining = remaining;
+            best = state;
         }
+        if (remaining === 0) break;
     }
 
-    return newSchedule;
+    if (!best) {
+        best = initial;
+        bestRemaining = totalTarget;
+    }
+    const result = best;
+    const unplaced = analyzeUnplaced(ctx, result);
+    const report: GenerationReport = {
+        totalTarget,
+        totalPlaced: totalTarget - bestRemaining,
+        unplaced,
+        attempts,
+        elapsedMs: Date.now() - started,
+    };
+
+    return {
+        data: {
+            ...data,
+            schedule: result.schedule,
+            lastUpdated: new Date().toISOString(),
+        },
+        report,
+    };
 }

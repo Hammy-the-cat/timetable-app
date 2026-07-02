@@ -11,6 +11,28 @@ interface AssignmentAuditViewProps {
 export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
     const { classes, teachers, subjects, schedule } = data;
 
+    const isHomeroomForClass = (teacher: Teacher, cls: ClassGroup) =>
+        teacher.id === cls.homeroomTeacherId ||
+        (teacher.role === "homeroom" && !!teacher.homeroomClassIds?.includes(cls.id));
+
+    const getExchangeClassForSubject = (sub: Subject, cls: ClassGroup) => {
+        if (cls.type !== "special" || !cls.exchangeClassId) return undefined;
+        const usesExchange =
+            (cls.specialType === "intellectual" && !!sub.intellectualExchange?.[cls.grade]) ||
+            (cls.specialType === "emotional" && !!sub.emotionalExchange?.[cls.grade]) ||
+            (cls.specialType === "physical" && !!sub.physicalExchange?.[cls.grade]) ||
+            !!sub.specialGradeExchange?.[cls.grade];
+        return usesExchange ? classes.find(c => c.id === cls.exchangeClassId) : undefined;
+    };
+
+    const getPlannedTeachers = (sub: Subject, cls: ClassGroup) => {
+        const assigned = teachers.filter(t =>
+            t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id))
+        );
+        if (assigned.length === 0 && getExchangeClassForSubject(sub, cls)) return [];
+        return assigned.length > 0 ? assigned : teachers.filter(t => t.subjects.includes(sub.name));
+    };
+
     // 各クラスの未設定コマのサマリー
     const classStatus = useMemo(() => {
         return classes.map((cls) => {
@@ -38,14 +60,19 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
                 // 誰がこの学級のこの教科を教えるはずか特定
                 let plannedTeacherName = "未定";
                 if (sub.name === "道徳" || sub.name === "学活") {
-                    const hr = teachers.find(t => t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id));
+                    const hr = teachers.find(t => isHomeroomForClass(t, cls));
                     plannedTeacherName = hr ? hr.name : "未定";
                 } else if (sub.name === "総合") {
-                    const eligible = teachers.filter(t => t.taughtGrades?.includes(cls.grade) || (t.role === "homeroom" && t.homeroomClassIds?.includes(cls.id)));
+                    const eligible = teachers.filter(t => t.taughtGrades?.includes(cls.grade) || isHomeroomForClass(t, cls));
                     plannedTeacherName = eligible.length > 0 ? eligible.map(e => e.name).join("/") : "学年所属未設定";
                 } else {
-                    const assigned = teachers.find(t => t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id)));
-                    plannedTeacherName = assigned ? assigned.name : "未設定";
+                    const exchangeClass = getExchangeClassForSubject(sub, cls);
+                    if (exchangeClass) {
+                        plannedTeacherName = `(交流)${exchangeClass.label}組`;
+                        return { name: sub.name, target, current, diff: target - current, plannedTeacherName };
+                    }
+                    const assigned = getPlannedTeachers(sub, cls);
+                    plannedTeacherName = assigned.length > 0 ? assigned.map(t => t.name).join("/") : "未設定";
                 }
 
                 return { name: sub.name, target, current, diff: target - current, plannedTeacherName };
@@ -98,12 +125,19 @@ export function AssignmentAuditView({ data }: AssignmentAuditViewProps) {
 
                     let isAssigned = false;
                     if (sub.name === "道徳" || sub.name === "学活") {
-                        if (teacher.role === "homeroom" && teacher.homeroomClassIds?.includes(cls.id)) isAssigned = true;
+                        if (isHomeroomForClass(teacher, cls)) isAssigned = true;
                     } else if (sub.name === "総合") {
                         // 総合は「学年所属」または「担任」が担当可能。ここでは「学年所属」を主として計算に含める
-                        if (teacher.taughtGrades?.includes(cls.grade)) isAssigned = true;
+                        if (teacher.taughtGrades?.includes(cls.grade) || isHomeroomForClass(teacher, cls)) isAssigned = true;
                     } else {
-                        if (teacher.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id))) isAssigned = true;
+                        const assigned = teachers.some(t =>
+                            t.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id))
+                        );
+                        if (assigned) {
+                            if (teacher.subjectAssignments?.some(a => a.subjectName === sub.name && a.classIds.includes(cls.id))) isAssigned = true;
+                        } else if (!getExchangeClassForSubject(sub, cls) && teacher.subjects.includes(sub.name)) {
+                            isAssigned = true;
+                        }
                     }
 
                     if (isAssigned) {
